@@ -1,0 +1,18 @@
+{
+  "//": "This package is a deliberate CommonJS island inside an ESM workspace. See docs/adr/0010-hardhat-commonjs-island.md. It therefore overrides the module settings from tsconfig.base.json rather than inheriting NodeNext.",
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "verbatimModuleSyntax": false,
+    "isolatedModules": false,
+    "declaration": false,
+    "declarationMap": false,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "types": ["node", "mocha", "chai"],
+    "outDir": "dist",
+    "noEmit": true
+  },
+  "include": ["hardhat.config.ts", "test/**/*.ts", "scripts/**/*.ts"]
+}

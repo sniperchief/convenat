@@ -1,0 +1,36 @@
+# --- secrets: never commit ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# --- dependencies ---
+node_modules/
+
+# --- build output ---
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# --- smart contract tooling ---
+artifacts/
+cache/
+typechain-types/
+
+# Ephemeral local deployments. Testnet and mainnet manifests ARE committed.
+packages/contracts/deployments/hardhat.json
+packages/contracts/deployments/localhost.json
+
+# --- editors / os ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# --- logs ---
+*.log
+npm-debug.log*

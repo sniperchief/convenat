@@ -1,0 +1,95 @@
+{
+  "note": "A validation experiment, not a benchmark. Four prompts, one run each. No model response text is recorded — only whether the system behaved correctly.",
+  "ranAt": "2026-08-19T00:46:36.778Z",
+  "model": "claude-haiku-4-5",
+  "compilerVersion": "1.0.0",
+  "cases": [
+    {
+      "label": "clear",
+      "expected": "COMPILED",
+      "why": "A fixed instant, a numeric threshold, and a named source. Objectively settleable."
+    },
+    {
+      "label": "ambiguous",
+      "expected": "INCOMPLETE",
+      "why": "\"Does well\" has no threshold and no source. There is nothing to measure."
+    },
+    {
+      "label": "subjective",
+      "expected": "INCOMPLETE",
+      "why": "Whether a film is \"the best\" is a matter of taste, not a fact any source attests."
+    },
+    {
+      "label": "missing deadline",
+      "expected": "INCOMPLETE",
+      "why": "Objective and sourced, but with no instant to measure at. The compiler must ask rather than invent one — an invented deadline would go inside a hash a user is asked to approve."
+    }
+  ],
+  "results": [
+    {
+      "label": "clear",
+      "expected": "COMPILED",
+      "outcome": "INCOMPLETE",
+      "matchedExpectation": false,
+      "outputParsed": true,
+      "sharedValidationPassed": null,
+      "rulesHash": null,
+      "questionCount": 2,
+      "missingFields": [
+        "approvedSources[0].dataPath",
+        "timezone"
+      ],
+      "errorType": null
+    },
+    {
+      "label": "ambiguous",
+      "expected": "INCOMPLETE",
+      "outcome": "INCOMPLETE",
+      "matchedExpectation": true,
+      "outputParsed": true,
+      "sharedValidationPassed": null,
+      "rulesHash": null,
+      "questionCount": 3,
+      "missingFields": [
+        "successCondition",
+        "approvedSources",
+        "deadline"
+      ],
+      "errorType": null
+    },
+    {
+      "label": "subjective",
+      "expected": "INCOMPLETE",
+      "outcome": "INCOMPLETE",
+      "matchedExpectation": true,
+      "outputParsed": true,
+      "sharedValidationPassed": null,
+      "rulesHash": null,
+      "questionCount": 3,
+      "missingFields": [
+        "deadline",
+        "approvedSources",
+        "successCondition"
+      ],
+      "errorType": null
+    },
+    {
+      "label": "missing deadline",
+      "expected": "INCOMPLETE",
+      "outcome": "INCOMPLETE",
+      "matchedExpectation": true,
+      "outputParsed": true,
+      "sharedValidationPassed": null,
+      "rulesHash": null,
+      "questionCount": 3,
+      "missingFields": [
+        "deadline",
+        "successCondition / failureCondition",
+        "approvedSources / resolutionMethod"
+      ],
+      "errorType": null
+    }
+  ],
+  "matched": 3,
+  "total": 4
+}

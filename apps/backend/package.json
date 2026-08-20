@@ -1,0 +1,38 @@
+{
+  "name": "@covenant/backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Fastify API and the AI condition compiler. Proposes structured specifications; never touches financial state.",
+  "license": "UNLICENSED",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "start": "node dist/index.js",
+    "start:indexer": "node dist/indexer/main.js",
+    "reconcile": "node dist/reconcile/main.js",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\""
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.68.0",
+    "@covenant/shared": "0.1.0",
+    "drizzle-orm": "^0.45.2",
+    "fastify": "^5.2.1",
+    "pg": "^8.13.1",
+    "viem": "^2.55.16",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "@types/pg": "^8.11.10",
+    "drizzle-kit": "^0.31.10",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  }
+}

@@ -1,0 +1,223 @@
+{
+  "completedAt": "2026-08-19T00:06:58.498Z",
+  "chainId": 1952,
+  "walletA": "0x9d4110a139aa42a8b9af91d5ce7e8721dd620e76",
+  "walletB": "0x4709ad099e04b336e558bfced210bcc5e16b1a8a",
+  "resolver": "0xcb2b8052734cf2512bc70e959f98e5bdf17a7326",
+  "balances": {
+    "A": {
+      "opening": "9800000000",
+      "closing": "10200000000"
+    },
+    "B": {
+      "opening": "9400000000",
+      "closing": "9800000000"
+    }
+  },
+  "markets": [
+    {
+      "variant": "plain",
+      "marketId": "5",
+      "address": "0x7607cdd15fee1d69758816471a2b037239ceb5cc",
+      "rulesHash": "0x0e1002058488bb63df1d89aa3e22f20f16917ff9fc049f299453190a55df1f4c",
+      "state": "SETTLED",
+      "finalOutcome": 1,
+      "residualBaseUnits": "0"
+    },
+    {
+      "variant": "challenged",
+      "marketId": "6",
+      "address": "0x076e83999bea40c881621259c48d460a7fe4a2b8",
+      "rulesHash": "0xdcf1c8f45d334664f673f8a2ee431e7bcb6463ccafa1bc6f40f7674ce5919e81",
+      "state": "SETTLED",
+      "finalOutcome": 2,
+      "residualBaseUnits": "0"
+    }
+  ],
+  "steps": [
+    {
+      "at": "2026-08-19T00:03:22.100Z",
+      "step": "close",
+      "variant": "plain",
+      "txHash": "0x0759cd57fff60ca7dfe9d5a979b5898d3d2b6a8745b2b9837d60b2c28d82f4d1",
+      "detail": {
+        "totalYes": "100.000000",
+        "totalNo": "300.000000"
+      }
+    },
+    {
+      "at": "2026-08-19T00:03:35.233Z",
+      "step": "close",
+      "variant": "challenged",
+      "txHash": "0x53705b1c44424ee8f118c341516294621c0a7402700061278bf5f60fe95f8cac",
+      "detail": {
+        "totalYes": "100.000000",
+        "totalNo": "300.000000"
+      }
+    },
+    {
+      "at": "2026-08-19T00:03:48.492Z",
+      "step": "proposeResolution YES (round 1)",
+      "variant": "plain",
+      "txHash": "0x304124ccf27017d96ec251ea1898127f8d076cd811b4d60e5657341a0d93b048",
+      "detail": {
+        "round": "1"
+      }
+    },
+    {
+      "at": "2026-08-19T00:04:00.491Z",
+      "step": "proposeResolution YES (round 1)",
+      "variant": "challenged",
+      "txHash": "0x98b5fc457c2d5d6332a7c43301acd02606b883a96e4621cbf260d9542098393c",
+      "detail": {
+        "round": "1"
+      }
+    },
+    {
+      "at": "2026-08-19T00:04:04.380Z",
+      "step": "waiting for the challenge window to close",
+      "variant": "plain",
+      "txHash": null,
+      "detail": {
+        "secondsLeft": "44"
+      }
+    },
+    {
+      "at": "2026-08-19T00:04:33.956Z",
+      "step": "challenge (wallet B)",
+      "variant": "challenged",
+      "txHash": "0x201da8625655fa6c408f581e2068561afa7190b45b008fb3f0319c3cecfb7126",
+      "detail": {
+        "bond": "25.000000",
+        "bondDelta": "-25.000000"
+      }
+    },
+    {
+      "at": "2026-08-19T00:04:38.506Z",
+      "step": "waiting for the challenge window to close",
+      "variant": "plain",
+      "txHash": null,
+      "detail": {
+        "secondsLeft": "10"
+      }
+    },
+    {
+      "at": "2026-08-19T00:04:50.324Z",
+      "step": "proposeResolution NO (round 2)",
+      "variant": "challenged",
+      "txHash": "0xee494972942e06306fe0901c2dc7f18b52985bdc8d6a05618f2edfe748897271",
+      "detail": {
+        "round": "2"
+      }
+    },
+    {
+      "at": "2026-08-19T00:05:03.743Z",
+      "step": "finalize",
+      "variant": "plain",
+      "txHash": "0xeec3743a2a7b5fd1ffb7b13227873855b1a584d475feec9b87fbba01a13b475d",
+      "detail": {
+        "finalOutcome": "1",
+        "refundMode": "false"
+      }
+    },
+    {
+      "at": "2026-08-19T00:05:10.054Z",
+      "step": "waiting for the challenge window to close",
+      "variant": "challenged",
+      "txHash": null,
+      "detail": {
+        "secondsLeft": "41"
+      }
+    },
+    {
+      "at": "2026-08-19T00:05:24.853Z",
+      "step": "claim (wallet A)",
+      "variant": "plain",
+      "txHash": "0xc1d1bc92c3d8c3b74f2a888f422c76afdc7a653ae989de6f3dcab84f603cee01",
+      "detail": {
+        "payout": "400.000000"
+      }
+    },
+    {
+      "at": "2026-08-19T00:05:31.055Z",
+      "step": "waiting for the challenge window to close",
+      "variant": "challenged",
+      "txHash": null,
+      "detail": {
+        "secondsLeft": "19"
+      }
+    },
+    {
+      "at": "2026-08-19T00:05:33.070Z",
+      "step": "settled",
+      "variant": "plain",
+      "txHash": null,
+      "detail": {}
+    },
+    {
+      "at": "2026-08-19T00:05:37.701Z",
+      "step": "waiting for the challenge window to close",
+      "variant": "challenged",
+      "txHash": null,
+      "detail": {
+        "secondsLeft": "13"
+      }
+    },
+    {
+      "at": "2026-08-19T00:05:57.133Z",
+      "step": "settled",
+      "variant": "plain",
+      "txHash": null,
+      "detail": {}
+    },
+    {
+      "at": "2026-08-19T00:06:10.376Z",
+      "step": "finalize",
+      "variant": "challenged",
+      "txHash": "0xcf46162bf2a1f55c87fcaec1c7d9e8ec4093865c1da9b1ffa55fee7f42921531",
+      "detail": {
+        "finalOutcome": "2",
+        "refundMode": "false"
+      }
+    },
+    {
+      "at": "2026-08-19T00:06:14.055Z",
+      "step": "settled",
+      "variant": "plain",
+      "txHash": null,
+      "detail": {}
+    },
+    {
+      "at": "2026-08-19T00:06:29.620Z",
+      "step": "claim (wallet B)",
+      "variant": "challenged",
+      "txHash": "0x09aa05be0d75255d5d8df62a5980634ec89a77b5cda87c95b31cfc6e3ebac12e",
+      "detail": {
+        "payout": "400.000000"
+      }
+    },
+    {
+      "at": "2026-08-19T00:06:41.615Z",
+      "step": "claimChallengeBond (wallet B)",
+      "variant": "challenged",
+      "txHash": "0xa39d457a44cf3ba8dde5ffbdc4807caee5b8ae47266a2c8f30631e3cba34ff6c",
+      "detail": {
+        "returned": "25.000000"
+      }
+    },
+    {
+      "at": "2026-08-19T00:06:45.950Z",
+      "step": "settled",
+      "variant": "plain",
+      "txHash": null,
+      "detail": {}
+    },
+    {
+      "at": "2026-08-19T00:06:48.564Z",
+      "step": "settled",
+      "variant": "challenged",
+      "txHash": null,
+      "detail": {}
+    }
+  ]
+}

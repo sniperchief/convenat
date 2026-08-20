@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "environment": "testnet",
+  "network": "xlayer-testnet",
+  "chainId": 1952,
+  "deployedAt": "2026-08-17T18:45:32.651Z",
+  "deployer": "0x15f361dfdcb0fbb1832f62dade2e718ffb9c34bd",
+  "resolver": "0xcb2b8052734cf2512bc70e959f98e5bdf17a7326",
+  "compiler": {
+    "solc": "0.8.24",
+    "evmVersion": "paris",
+    "optimizer": {
+      "enabled": true,
+      "runs": 200
+    }
+  },
+  "startBlock": 38533494,
+  "contracts": {
+    "TestUSD": {
+      "address": "0x6d7227b319972af3006337fc5cda17737571c2e2",
+      "transactionHash": "0x302b382569cefd53cadfb88743e3d455ca6b0eaf9352061423980c61f923c007",
+      "blockNumber": 38533481,
+      "constructorArgs": [],
+      "verification": {
+        "status": "attempted-failed",
+        "url": null,
+        "note": "Verification attempt failed: You are trying to verify a contract in 'xlayerTestnet', but no API token was found for this network. Please provide one in your hardhat config. For example:\n\n{\n  ...\n  etherscan: {\n    apiKey: {\n      xlayerTestnet: 'your API key'\n    }\n  }\n}\n\nSee https://etherscan.io/apis"
+      }
+    },
+    "ConditionalMarketImplementation": {
+      "address": "0xc9619d94a57f0480271142d6e22182a3264ac7d1",
+      "transactionHash": "0x8aa55a40d9783b357e09575c2ca043b5c0da763c3471f77094d892ff1f8044b5",
+      "blockNumber": 38533488,
+      "constructorArgs": [],
+      "verification": {
+        "status": "attempted-failed",
+        "url": null,
+        "note": "Verification attempt failed: You are trying to verify a contract in 'xlayerTestnet', but no API token was found for this network. Please provide one in your hardhat config. For example:\n\n{\n  ...\n  etherscan: {\n    apiKey: {\n      xlayerTestnet: 'your API key'\n    }\n  }\n}\n\nSee https://etherscan.io/apis"
+      }
+    },
+    "MarketFactory": {
+      "address": "0x0b039cfbd96c13c34a2fe9445d4e155a403cfb3e",
+      "transactionHash": "0x79f24a6728e3bb81d523d5a2b04c584d4f6f837bcf2763ec21eb295de0373f46",
+      "blockNumber": 38533494,
+      "constructorArgs": [
+        "0x15f361dFDCB0fBB1832F62dAde2e718FFB9c34bD",
+        "0xcB2b8052734Cf2512bC70e959F98e5bDf17A7326",
+        "0xc9619d94A57F0480271142d6e22182A3264aC7d1"
+      ],
+      "verification": {
+        "status": "attempted-failed",
+        "url": null,
+        "note": "Verification attempt failed: You are trying to verify a contract in 'xlayerTestnet', but no API token was found for this network. Please provide one in your hardhat config. For example:\n\n{\n  ...\n  etherscan: {\n    apiKey: {\n      xlayerTestnet: 'your API key'\n    }\n  }\n}\n\nSee https://etherscan.io/apis"
+      }
+    }
+  }
+}

@@ -1,0 +1,149 @@
+{
+  "generatedAt": "2026-08-17T21:35:03.241Z",
+  "chainId": 1952,
+  "environment": "testnet",
+  "factory": "0x0b039cfbd96c13c34a2fe9445d4e155a403cfb3e",
+  "creator": "0x9d4110a139aa42a8b9af91d5ce7e8721dd620e76",
+  "markets": [
+    {
+      "variant": "plain",
+      "rulesHash": "0x0e1002058488bb63df1d89aa3e22f20f16917ff9fc049f299453190a55df1f4c",
+      "canonical": "{\"ambiguities\":[{\"assumption\":\"Only records published at or before the deadline are considered.\",\"description\":\"The probe could publish a status after the deadline.\"}],\"approvedSources\":[{\"dataPath\":\"/status\",\"name\":\"Covenant integration probe A (primary)\",\"retrievalKind\":\"http_json\",\"url\":\"https://example.org/covenant/testnet-probe-a/status.json\"}],\"conditionType\":\"binary\",\"creator\":\"0x9d4110a139aa42a8b9af91d5ce7e8721dd620e76\",\"deadline\":\"2026-08-17T21:55:03Z\",\"edgeCases\":[{\"outcome\":\"INVALID\",\"scenario\":\"The source is unreachable throughout the resolution window.\"}],\"evidenceRequirements\":[\"The UTC instant of retrieval.\",\"The retrieved record, including its status field, captured at retrieval time.\"],\"failureCondition\":\"The integration probe A publishes a record whose status field is anything other than \\\"OK\\\", or publishes no record at all, by the deadline.\",\"nonce\":\"0x894b4a7df74b12d0886af4264d2074e6b72c9adcae3cb3a4da9e7a73ffecab2c\",\"question\":\"Did designated X Layer testnet integration probe A report status OK?\",\"resolutionMethod\":\"source_attested_status\",\"risk\":\"low\",\"settlement\":{\"challengeBondBaseUnits\":\"25000000\",\"challengeWindowSeconds\":60,\"kind\":\"binary_parimutuel\",\"resolutionDeadlineSeconds\":3600,\"token\":{\"address\":\"0x6d7227b319972af3006337fc5cda17737571c2e2\",\"chainId\":1952,\"decimals\":6,\"symbol\":\"TUSD\"},\"tradingEndsAt\":\"2026-08-17T21:50:03Z\"},\"successCondition\":\"The integration probe A publishes a record whose status field is exactly \\\"OK\\\" at or before the deadline.\",\"timezone\":\"UTC\",\"version\":\"1.0\"}",
+      "specification": {
+        "version": "1.0",
+        "nonce": "0x894b4a7df74b12d0886af4264d2074e6b72c9adcae3cb3a4da9e7a73ffecab2c",
+        "creator": "0x9d4110a139aa42a8b9af91d5ce7e8721dd620e76",
+        "question": "Did designated X Layer testnet integration probe A report status OK?",
+        "conditionType": "binary",
+        "successCondition": "The integration probe A publishes a record whose status field is exactly \"OK\" at or before the deadline.",
+        "failureCondition": "The integration probe A publishes a record whose status field is anything other than \"OK\", or publishes no record at all, by the deadline.",
+        "deadline": "2026-08-17T21:55:03Z",
+        "timezone": "UTC",
+        "resolutionMethod": "source_attested_status",
+        "approvedSources": [
+          {
+            "name": "Covenant integration probe A (primary)",
+            "url": "https://example.org/covenant/testnet-probe-a/status.json",
+            "retrievalKind": "http_json",
+            "dataPath": "/status"
+          }
+        ],
+        "evidenceRequirements": [
+          "The retrieved record, including its status field, captured at retrieval time.",
+          "The UTC instant of retrieval."
+        ],
+        "ambiguities": [
+          {
+            "description": "The probe could publish a status after the deadline.",
+            "assumption": "Only records published at or before the deadline are considered."
+          }
+        ],
+        "edgeCases": [
+          {
+            "scenario": "The source is unreachable throughout the resolution window.",
+            "outcome": "INVALID"
+          }
+        ],
+        "risk": "low",
+        "settlement": {
+          "kind": "binary_parimutuel",
+          "token": {
+            "chainId": 1952,
+            "address": "0x6d7227b319972af3006337fc5cda17737571c2e2",
+            "symbol": "TUSD",
+            "decimals": 6
+          },
+          "tradingEndsAt": "2026-08-17T21:50:03Z",
+          "challengeWindowSeconds": 60,
+          "challengeBondBaseUnits": "25000000",
+          "resolutionDeadlineSeconds": 3600
+        }
+      },
+      "createMarketParams": {
+        "token": "0x6d7227b319972af3006337fc5cda17737571c2e2",
+        "rulesHash": "0x0e1002058488bb63df1d89aa3e22f20f16917ff9fc049f299453190a55df1f4c",
+        "tradingEndsAt": 1787003403,
+        "conditionDeadline": 1787003703,
+        "challengeWindow": 60,
+        "resolutionWindow": 3600,
+        "challengeBond": "25000000"
+      },
+      "onchain": {
+        "marketId": "5",
+        "address": "0x7607cdd15fee1d69758816471a2b037239ceb5cc",
+        "transactionHash": "0xecfbbd964ad12c0a2a4738184ed1951c4ac62d54e24c194bb994c3ee32f40ef0",
+        "blockNumber": 38543858
+      }
+    },
+    {
+      "variant": "challenged",
+      "rulesHash": "0xdcf1c8f45d334664f673f8a2ee431e7bcb6463ccafa1bc6f40f7674ce5919e81",
+      "canonical": "{\"ambiguities\":[{\"assumption\":\"Only records published at or before the deadline are considered.\",\"description\":\"The probe could publish a status after the deadline.\"}],\"approvedSources\":[{\"dataPath\":\"/status\",\"name\":\"Covenant integration probe B (primary)\",\"retrievalKind\":\"http_json\",\"url\":\"https://example.org/covenant/testnet-probe-b/status.json\"}],\"conditionType\":\"binary\",\"creator\":\"0x9d4110a139aa42a8b9af91d5ce7e8721dd620e76\",\"deadline\":\"2026-08-17T21:55:03Z\",\"edgeCases\":[{\"outcome\":\"INVALID\",\"scenario\":\"The source is unreachable throughout the resolution window.\"}],\"evidenceRequirements\":[\"The UTC instant of retrieval.\",\"The retrieved record, including its status field, captured at retrieval time.\"],\"failureCondition\":\"The integration probe B publishes a record whose status field is anything other than \\\"OK\\\", or publishes no record at all, by the deadline.\",\"nonce\":\"0xb9270cb07b0c22229158a3ac8053a1b8b55ed0435553d0bbf208ef43541bfe07\",\"question\":\"Did designated X Layer testnet integration probe B report status OK?\",\"resolutionMethod\":\"source_attested_status\",\"risk\":\"low\",\"settlement\":{\"challengeBondBaseUnits\":\"25000000\",\"challengeWindowSeconds\":60,\"kind\":\"binary_parimutuel\",\"resolutionDeadlineSeconds\":3600,\"token\":{\"address\":\"0x6d7227b319972af3006337fc5cda17737571c2e2\",\"chainId\":1952,\"decimals\":6,\"symbol\":\"TUSD\"},\"tradingEndsAt\":\"2026-08-17T21:50:03Z\"},\"successCondition\":\"The integration probe B publishes a record whose status field is exactly \\\"OK\\\" at or before the deadline.\",\"timezone\":\"UTC\",\"version\":\"1.0\"}",
+      "specification": {
+        "version": "1.0",
+        "nonce": "0xb9270cb07b0c22229158a3ac8053a1b8b55ed0435553d0bbf208ef43541bfe07",
+        "creator": "0x9d4110a139aa42a8b9af91d5ce7e8721dd620e76",
+        "question": "Did designated X Layer testnet integration probe B report status OK?",
+        "conditionType": "binary",
+        "successCondition": "The integration probe B publishes a record whose status field is exactly \"OK\" at or before the deadline.",
+        "failureCondition": "The integration probe B publishes a record whose status field is anything other than \"OK\", or publishes no record at all, by the deadline.",
+        "deadline": "2026-08-17T21:55:03Z",
+        "timezone": "UTC",
+        "resolutionMethod": "source_attested_status",
+        "approvedSources": [
+          {
+            "name": "Covenant integration probe B (primary)",
+            "url": "https://example.org/covenant/testnet-probe-b/status.json",
+            "retrievalKind": "http_json",
+            "dataPath": "/status"
+          }
+        ],
+        "evidenceRequirements": [
+          "The retrieved record, including its status field, captured at retrieval time.",
+          "The UTC instant of retrieval."
+        ],
+        "ambiguities": [
+          {
+            "description": "The probe could publish a status after the deadline.",
+            "assumption": "Only records published at or before the deadline are considered."
+          }
+        ],
+        "edgeCases": [
+          {
+            "scenario": "The source is unreachable throughout the resolution window.",
+            "outcome": "INVALID"
+          }
+        ],
+        "risk": "low",
+        "settlement": {
+          "kind": "binary_parimutuel",
+          "token": {
+            "chainId": 1952,
+            "address": "0x6d7227b319972af3006337fc5cda17737571c2e2",
+            "symbol": "TUSD",
+            "decimals": 6
+          },
+          "tradingEndsAt": "2026-08-17T21:50:03Z",
+          "challengeWindowSeconds": 60,
+          "challengeBondBaseUnits": "25000000",
+          "resolutionDeadlineSeconds": 3600
+        }
+      },
+      "createMarketParams": {
+        "token": "0x6d7227b319972af3006337fc5cda17737571c2e2",
+        "rulesHash": "0xdcf1c8f45d334664f673f8a2ee431e7bcb6463ccafa1bc6f40f7674ce5919e81",
+        "tradingEndsAt": 1787003403,
+        "conditionDeadline": 1787003703,
+        "challengeWindow": 60,
+        "resolutionWindow": 3600,
+        "challengeBond": "25000000"
+      },
+      "onchain": {
+        "marketId": "6",
+        "address": "0x076e83999bea40c881621259c48d460a7fe4a2b8",
+        "transactionHash": "0x82c47d742e1dd0dd3d26ca1e61b800278281fba4b69125d9598a1d699ab8a073",
+        "blockNumber": 38543871
+      }
+    }
+  ]
+}
