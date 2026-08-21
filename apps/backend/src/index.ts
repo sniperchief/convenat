@@ -21,6 +21,8 @@ async function main(): Promise<void> {
     compiler: runtime.compiler,
     auth: runtime.auth,
     chain: runtime.chain,
+    resolution: runtime.resolution,
+    corsOrigins: config.corsOrigins,
     contracts: {
       factory: runtime.addresses.factory,
       settlementToken: runtime.addresses.settlementToken,
@@ -38,6 +40,11 @@ async function main(): Promise<void> {
       settlementToken: runtime.addresses.settlementToken,
       startBlock: runtime.addresses.startBlock.toString(),
       manifestEnvironment: runtime.manifest.environment,
+      // The address, never the key. It is a public fact — anyone can read
+      // `isProposer` from the factory — and knowing which address the resolver
+      // is makes its on-chain behaviour auditable.
+      resolverAddress: runtime.resolverWriter?.resolverAddress ?? null,
+      canSubmitProposals: runtime.resolverWriter !== null,
     },
     'deployment manifest loaded and chain id verified',
   );

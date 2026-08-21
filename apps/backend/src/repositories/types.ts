@@ -118,6 +118,16 @@ export interface MarketRecord {
   readonly question: string;
   readonly specification: ConditionSpec;
   readonly canonical: string;
+  /**
+   * The deterministic acceptance criteria, or null when none was supplied.
+   *
+   * Typed `unknown` here rather than `ValidationPlan`: the repository layer
+   * stores documents and must not depend on the resolution layer's schema. It is
+   * parsed through `validateValidationPlan` at the point of use, so a plan that
+   * was valid when written and is not valid under a later build fails loudly
+   * instead of being trusted because it is in the database.
+   */
+  readonly validationPlan: unknown | null;
   readonly deadline: string;
   readonly tradingEndsAt: string;
   readonly status: MarketStatus;
@@ -171,6 +181,21 @@ export interface MarketRepository {
 
   /** Every market with an on-chain address, for the indexer's log filter. */
   listOnChainAddresses(chainId: number): Promise<readonly string[]>;
+
+  /**
+   * Attach or replace the deterministic acceptance criteria.
+   *
+   * Separate from `register` because a plan may legitimately arrive after the
+   * specification — and because a method named for what it does is easier to
+   * audit than an optional field on a general-purpose write.
+   *
+   * Returns null when no such market exists.
+   */
+  setValidationPlan(input: {
+    rulesHash: string;
+    plan: unknown;
+    at: Date;
+  }): Promise<MarketRecord | null>;
 }
 
 // --- chain: indexed events -------------------------------------------------
@@ -377,6 +402,9 @@ export interface AuthSessionRepository {
 
 // --- resolutions -----------------------------------------------------------
 
+/** How far a proposal has got towards being a fact on-chain. */
+export type SubmissionState = 'NOT_SUBMITTED' | 'SUBMITTED' | 'CONFIRMED' | 'FAILED';
+
 export interface ResolutionRecord {
   readonly id: string;
   readonly rulesHash: Bytes32Hex;
@@ -389,10 +417,61 @@ export interface ResolutionRecord {
   readonly round: number;
   readonly proposedAt: string | null;
   readonly finalizedAt: string | null;
+  readonly createdAt: string;
+  /**
+   * The engine's full record, for the resolution panel.
+   *
+   * `unknown` rather than a typed record for the same reason the validation plan
+   * is: this layer stores documents. The route projects it, and a projection that
+   * cannot find a field renders it as absent rather than throwing.
+   */
+  readonly record: unknown | null;
+  readonly proposalTxHash: string | null;
+  readonly proposalBlock: string | null;
+  readonly submissionState: SubmissionState;
 }
 
 export interface ResolutionRepository {
   findLatestByRulesHash(rulesHash: string): Promise<ResolutionRecord | null>;
+
+  /** Every attempt for a market, newest first. */
+  listByRulesHash(rulesHash: string): Promise<readonly ResolutionRecord[]>;
+
+  /** The standing proposal for a round, or null. Used to make `/resolve` idempotent. */
+  findProposedByRound(rulesHash: string, round: number): Promise<ResolutionRecord | null>;
+
+  /** Record one attempt, whatever its status. */
+  record(input: {
+    rulesHash: string;
+    status: ResolutionStatus;
+    outcome: Outcome | null;
+    confidenceBps: number;
+    reason: string;
+    evidenceHash: string | null;
+    resolverVersion: string;
+    round: number;
+    record: unknown | null;
+    createdAt: Date;
+  }): Promise<ResolutionRecord>;
+
+  /**
+   * Attach the transaction that carried a proposal on-chain.
+   *
+   * Called twice in the normal path — once at `SUBMITTED` with a hash, once at
+   * `CONFIRMED` with a block — because a hash is not an outcome and the record
+   * has to be able to say which of the two it is holding.
+   */
+  markSubmission(input: {
+    id: string;
+    submissionState: SubmissionState;
+    proposalTxHash: string | null;
+    proposalBlock: string | null;
+    proposedAt: Date | null;
+    at: Date;
+  }): Promise<ResolutionRecord | null>;
+
+  /** Stamp the finalization time observed on-chain. */
+  markFinalized(input: { rulesHash: string; at: Date }): Promise<number>;
 }
 
 // --- evidence --------------------------------------------------------------
@@ -406,7 +485,63 @@ export interface EvidenceRecord {
 }
 
 export interface EvidenceRepository {
+  /** The most recent package for a market. */
   findByRulesHash(rulesHash: string): Promise<EvidenceRecord | null>;
+  /**
+   * The package behind a specific commitment.
+   *
+   * This is the lookup that makes a published `evidenceHash` checkable: given
+   * the hash the contract holds, return the document, and let the reader
+   * re-derive the digest themselves.
+   */
+  findByEvidenceHash(evidenceHash: string): Promise<EvidenceRecord | null>;
+  /** Idempotent on `evidenceHash`: the same package saved twice is one row. */
+  save(input: {
+    rulesHash: string;
+    evidenceHash: string;
+    package: EvidencePackage;
+    createdAt: Date;
+  }): Promise<EvidenceRecord>;
+}
+
+// --- challenges ------------------------------------------------------------
+
+/**
+ * The off-chain argument behind an on-chain challenge.
+ *
+ * A row exists only when `keccak256(reason)` was verified equal to the
+ * `challengeReasonHash` the contract stored, and the on-chain `challenger`
+ * matched the authenticated wallet. Without both checks this table would be a
+ * place for anyone to put words in a challenger's mouth.
+ */
+export interface ChallengeDocumentRecord {
+  readonly id: string;
+  readonly rulesHash: Bytes32Hex;
+  readonly challenger: string;
+  readonly reasonHash: Bytes32Hex;
+  readonly reason: string;
+  readonly bond: string;
+  readonly txHash: string;
+  readonly round: number;
+  readonly challengedAt: string;
+  readonly createdAt: string;
+}
+
+export interface ChallengeRepository {
+  /** Idempotent on `(rulesHash, round)`: re-filing the same challenge is not an error. */
+  save(input: {
+    rulesHash: string;
+    challenger: string;
+    reasonHash: string;
+    reason: string;
+    bond: string;
+    txHash: string;
+    round: number;
+    challengedAt: Date;
+    createdAt: Date;
+  }): Promise<ChallengeDocumentRecord>;
+
+  findByRulesHash(rulesHash: string): Promise<ChallengeDocumentRecord | null>;
 }
 
 // --- aggregate -------------------------------------------------------------
@@ -418,6 +553,7 @@ export interface Repositories {
   readonly markets: MarketRepository;
   readonly resolutions: ResolutionRepository;
   readonly evidence: EvidenceRepository;
+  readonly challenges: ChallengeRepository;
   readonly events: MarketEventRepository;
   readonly checkpoints: IndexerCheckpointRepository;
   readonly chainState: MarketChainStateRepository;

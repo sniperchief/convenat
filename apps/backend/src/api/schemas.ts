@@ -93,6 +93,16 @@ export const registerMarketRequestSchema = z
     // copy of that schema would be a second thing to drift.
     specification: z.record(z.unknown()),
     rulesHash: bytes32Schema,
+    /**
+     * The deterministic acceptance criteria, optionally supplied with the
+     * specification.
+     *
+     * Validated by `validateValidationPlan`, not here, for the same reason the
+     * specification is: one schema per document. It is **not** inside
+     * `rulesHash` — a weakening recorded in ADR-0017 — and a market registered
+     * without one resolves to `NEEDS_REVIEW` rather than to a guess.
+     */
+    validationPlan: z.record(z.unknown()).optional(),
   })
   .strict();
 
@@ -142,23 +152,55 @@ export const marketIdParamSchema = z
   })
   .strict();
 
+/**
+ * Recording a challenge that already exists on-chain.
+ *
+ * **`challenger` is gone**, for the same reason `creator` left the compile
+ * request: an address a caller can set is not an identity. The challenger is the
+ * authenticated wallet, and it must equal the address the contract recorded.
+ *
+ * `reason` is not trimmed. Its keccak256 must equal the hash the challenger
+ * committed with their bond, and trimming would change the bytes and therefore
+ * the hash — a whitespace-only edit would make a genuine document unrecordable.
+ */
 export const challengeRequestSchema = z
   .object({
-    challenger: addressSchema,
-    reason: z.string().trim().min(1).max(4000),
+    reason: z.string().min(1).max(8000),
     txHash: z
       .string()
       .trim()
-      .regex(/^0x[0-9a-fA-F]{64}$/, 'must be a transaction hash'),
+      .regex(/^0x[0-9a-fA-F]{64}$/, 'must be a transaction hash')
+      .transform((value) => value.toLowerCase()),
   })
   .strict();
 
 export const resolveRequestSchema = z
   .object({
     force: z.boolean().optional(),
+    dryRun: z.boolean().optional(),
   })
   .strict()
   .default({});
+
+/**
+ * Hashing a challenge argument before it is committed.
+ *
+ * Same bounds as `challengeRequestSchema`, and untrimmed for the same reason:
+ * the hash is over the exact bytes, so any normalisation here would produce a
+ * digest that does not match the text later offered for recording.
+ */
+export const challengePrepareRequestSchema = z
+  .object({
+    reason: z.string().min(1).max(8000),
+  })
+  .strict();
+
+/** Attaching acceptance criteria to a market that was registered without them. */
+export const validationPlanRequestSchema = z
+  .object({
+    validationPlan: z.record(z.unknown()),
+  })
+  .strict();
 
 /**
  * Positions.

@@ -19,6 +19,7 @@ import type {
   MarketEventName,
   OnChainMarket,
   OnChainPosition,
+  ResolverChainWriter,
   TransactionOutcome,
 } from '../src/chain/types.js';
 
@@ -207,15 +208,25 @@ export class FakeChainClient implements ChainClient {
     return Promise.resolve(null);
   }
 
+  /**
+   * What `waitForTransaction` reports.
+   *
+   * Scriptable because a **mined revert** is the case that matters most: the
+   * node accepted the transaction, it was included, and the effect did not
+   * happen. Any code that treats "mined" as "worked" is wrong, and this is how a
+   * test proves it does not.
+   */
+  transactionStatus: TransactionOutcome['status'] = 'CONFIRMED';
+
   waitForTransaction(hash: Hex): Promise<TransactionOutcome> {
     return Promise.resolve({
-      status: 'CONFIRMED',
+      status: this.transactionStatus,
       transactionHash: hash,
       blockNumber: this.head,
       blockHash: this.blocks[Number(this.head)]?.hash ?? null,
       gasUsed: 21_000n,
       confirmations: this.confirmations,
-      reason: null,
+      reason: this.transactionStatus === 'FAILED' ? 'The transaction was mined but reverted.' : null,
     });
   }
 }
@@ -248,6 +259,7 @@ export function fakeMarket(overrides: Partial<OnChainMarket> = {}): OnChainMarke
     reviewDeadline: 0,
     evidenceHash: `0x${'00'.repeat(32)}` as Hex,
     challenger: '0x0000000000000000000000000000000000000000',
+    challengeReasonHash: `0x${'00'.repeat(32)}` as Hex,
     challengedOutcome: 'UNSET',
     bondOutstanding: false,
     bondRefundable: false,
@@ -258,6 +270,62 @@ export function fakeMarket(overrides: Partial<OnChainMarket> = {}): OnChainMarke
     pool: 0n,
     ...overrides,
   };
+}
+
+/**
+ * A scripted `ResolverChainWriter`.
+ *
+ * Records every call instead of sending one, so a test can assert **that no
+ * transaction was attempted** — which is the assertion that matters for every
+ * review, refusal and dry run. A writer that silently succeeded would make those
+ * tests pass for the wrong reason.
+ *
+ * `onPropose` lets a test advance the fake market's state the way a real
+ * proposal would, so the pipeline can be driven through a full challenge round.
+ */
+export class FakeResolverWriter implements ResolverChainWriter {
+  readonly resolverAddress: Address = '0x00000000000000000000000000000000000re5o1' as Address;
+
+  readonly proposals: {
+    market: Address;
+    outcome: string;
+    evidenceHash: Hex;
+  }[] = [];
+  readonly finalizations: Address[] = [];
+
+  /** Set to throw, so the "the node refused the transaction" path is reachable. */
+  failWith: Error | null = null;
+
+  constructor(
+    private readonly hooks: {
+      onPropose?: (market: Address, outcome: string, evidenceHash: Hex) => void;
+      onFinalize?: (market: Address) => void;
+    } = {},
+  ) {}
+
+  proposeResolution(input: {
+    market: Address;
+    outcome: 'YES' | 'NO' | 'INVALID';
+    evidenceHash: Hex;
+  }): Promise<Hex> {
+    if (this.failWith !== null) return Promise.reject(this.failWith);
+    this.proposals.push({
+      market: input.market,
+      outcome: input.outcome,
+      evidenceHash: input.evidenceHash,
+    });
+    this.hooks.onPropose?.(input.market, input.outcome, input.evidenceHash);
+    return Promise.resolve(`0x${(this.proposals.length + 0xaa).toString(16).padStart(64, 'b')}` as Hex);
+  }
+
+  finalize(market: Address): Promise<Hex> {
+    if (this.failWith !== null) return Promise.reject(this.failWith);
+    this.finalizations.push(market);
+    this.hooks.onFinalize?.(market);
+    return Promise.resolve(
+      `0x${(this.finalizations.length + 0xff).toString(16).padStart(64, 'c')}` as Hex,
+    );
+  }
 }
 
 /** A silent logger, so a passing test prints nothing. */

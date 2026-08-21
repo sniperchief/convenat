@@ -16,11 +16,14 @@
  * output is a list of findings and an exit code.
  */
 
-import { buildRulesCommitment } from '@covenant/shared';
+import { buildRulesCommitment, verifyEvidenceHash } from '@covenant/shared';
 
 import type { ChainClient } from '../chain/types.js';
 import type { Address, Hex } from '../chain/types.js';
 import type { Repositories } from '../repositories/types.js';
+
+/** An unset bytes32. The contract's "no proposal yet" for `evidenceHash`. */
+const ZERO_HASH = `0x${'0'.repeat(64)}`;
 
 /**
  * How bad a finding is.
@@ -169,6 +172,77 @@ export async function reconcile(options: ReconcileOptions): Promise<ReconcileRep
         expected: onChain.rulesHash,
         actual: market.rulesHash,
       });
+    }
+
+    // --- the evidence behind the commitment --------------------------------
+    //
+    // A market that has proposed an outcome carries an `evidenceHash` on-chain.
+    // Publishing that digest is only meaningful if the document behind it can
+    // be produced *and* re-derives to it — otherwise the commitment is a number
+    // nobody can check, which is the failure this product exists to prevent.
+    //
+    // Three distinct problems, kept distinct because they call for different
+    // responses: we do not hold the package at all; we hold one but it hashes to
+    // something else; or we hold one that no longer validates.
+    if (onChain.evidenceHash !== ZERO_HASH) {
+      const stored = await repositories.evidence.findByEvidenceHash(onChain.evidenceHash);
+
+      if (stored === null) {
+        findings.push({
+          severity: 'missing',
+          kind: 'evidence-package-missing',
+          subject: address,
+          detail:
+            'The contract commits to an evidence hash for which this backend holds no package. ' +
+            'The outcome is on-chain and unexplainable — nobody can check what it was based on.',
+          expected: onChain.evidenceHash,
+          actual: 'no stored package',
+        });
+      } else if (!verifyEvidenceHash(stored.package, onChain.evidenceHash)) {
+        // The loudest severity available. The served document is not the one the
+        // digest covers, so anything shown from it is a claim about a different
+        // agreement.
+        findings.push({
+          severity: 'mismatch',
+          kind: 'evidence-hash-not-reproducible',
+          subject: address,
+          detail:
+            'The stored evidence package does not re-derive to the hash committed on-chain. It ' +
+            'has been altered since it was proposed, or it is not the package that was proposed.',
+          expected: onChain.evidenceHash,
+          actual: stored.evidenceHash,
+        });
+      } else if (stored.rulesHash.toLowerCase() !== onChain.rulesHash.toLowerCase()) {
+        // Reproduces its own digest perfectly and is evidence for another
+        // agreement — the distinction `EVIDENCE_RULES_MISMATCH` exists for.
+        findings.push({
+          severity: 'mismatch',
+          kind: 'evidence-bound-to-other-rules',
+          subject: address,
+          detail:
+            'The stored evidence package is bound to a different rules hash than this market ' +
+            'committed. The chain cannot detect this; nothing on-chain reads the document.',
+          expected: onChain.rulesHash,
+          actual: stored.rulesHash,
+        });
+      }
+
+      // A proposal exists on-chain but the resolver has no record of making
+      // one. Either it was made by another operator holding the proposer role,
+      // or a submission was lost after the transaction landed.
+      const attempt = await repositories.resolutions.findLatestByRulesHash(market.rulesHash);
+      if (attempt === null || attempt.evidenceHash === null) {
+        findings.push({
+          severity: 'warning',
+          kind: 'proposal-without-local-record',
+          subject: address,
+          detail:
+            'The contract holds a proposal this backend has no resolution record for. It was ' +
+            'proposed by something else, or the record was lost after submission.',
+          expected: onChain.evidenceHash,
+          actual: attempt?.evidenceHash ?? 'no resolution row',
+        });
+      }
     }
 
     // --- cached state ------------------------------------------------------

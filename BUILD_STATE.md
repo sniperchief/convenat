@@ -1,8 +1,10 @@
 # BUILD_STATE
 
-**Last updated:** 2026-08-20
-**Current milestone:** M5.4 — AI resolution intelligence (**complete**)
-**Next milestone:** M5.5 — on-chain proposal submission and challenge processing — not started
+**Last updated:** 2026-08-21
+**Current milestone:** M5.5–M5.7 — evidence pipeline, resolution engine, on-chain
+resolution + API + demo surface (**complete**)
+**Next milestone:** M6 — hardening; `ConditionSpec` v1.1 to carry acceptance criteria
+inside `rulesHash` (ADR-0017)
 
 ---
 
@@ -579,6 +581,146 @@ a `rulesHash` is not approving it. The concurrence rule above means a mis-set `e
 produces a review rather than an inverted payout, which is a real mitigation and not a
 substitute for `ConditionSpec` v1.1.
 
+### M5.5–M5.7 — The complete resolution pipeline
+
+The milestone that connects everything M5.1–M5.4 built to the chain, the API and a user:
+
+```
+ConditionSpec → load spec → verify rulesHash against the CHAIN → collect evidence
+  → deterministic validation → AI analysis → EvidencePackage → evidenceHash
+  → resolver proposal on-chain → challenge window → second proposal → finalization
+  → the contract settles
+```
+
+**The AI still cannot move funds, and now that claim has a transaction path to be false
+about.** Nothing in `resolution/engine.ts` imports a chain client, a signer or a key; the
+signer lives in one file (`chain/writer.ts`) that the engine cannot reach; and the two
+non-view functions the backend declares an ABI for are `proposeResolution` and
+`finalize`. `abi-parity.test.ts` asserts that list is exactly those two, so a `claim` or a
+`transferFrom` appearing there is a deliberate edit to a test rather than an accident.
+
+| Area | Modules |
+| --- | --- |
+| Write port | `chain/types.ts` — `ResolverChainWriter`; `chain/writer.ts` — the only file holding a key |
+| Orchestration | `resolution/service.ts` — gates, persistence, submission, finalization, challenge recording |
+| Projection | `api/resolution-view.ts` — the stored record → the panel's shape |
+| API | `api/server.ts` — resolve, resolution, challenge, challenge/prepare, finalize, validation-plan; CORS |
+| Storage | `db/schema.ts` — `challenges` table, `markets.validation_plan`, four columns on `resolutions` |
+| Demo surface | `apps/web/` — list, create, detail, and the resolution chain |
+| Tools | `tools/prepare-demo.ts`, `tools/demo.ts` |
+
+**M5.5's evidence pipeline was already built and was checked rather than rebuilt.** The
+brief asks for an injectable provider interface, a production HTTP provider, a fake for
+tests, and deterministic checks before any LLM judgment. M5.2 and M5.3 produced exactly
+that under different names — `EvidenceSourceAdapter`, `HttpsSourceAdapter`,
+`FakeSourceAdapter`, and `DeterministicCheck[]` with `{ checkId, checkType, expected,
+observed, result, explanation }`. Renaming them to match the brief's vocabulary would have
+churned a tested layer for nothing. What was added is the piece that was genuinely
+missing: the criteria have somewhere to *live* between market creation and resolution.
+
+**The one new architectural decision is ADR-0017: the validation plan is stored per
+market, outside `rulesHash`.** M5.3 found that `ConditionSpec` v1.0 promises
+`deterministic_numeric_threshold` and has nowhere to put the threshold, and passed the
+plan as a function argument because it had no persistence. Now it is a nullable
+`markets.validation_plan`, set by the **proved creator**, validated at write *and* on
+every read, and refused if it references a source the specification did not approve. A
+market with no plan resolves to `NEEDS_REVIEW` with reason `NO_VALIDATION_PLAN` — it never
+falls back to asking a model for a number that settles money.
+
+That is a real weakening and it is recorded as one: the numeric criteria a market settles
+on are creator-supplied rather than hash-committed. Four things bound it, and the second
+is the load-bearing one — **a deadline comparison may only use `spec_deadline`**, because
+the plan schema has no literal-instant variant at all. An unhashed plan therefore cannot
+substitute a deadline for the one inside `rulesHash`.
+
+**The resolution service is a sequence of refusals, and the hash comparison is a stop.**
+Before a model is called, the service reads the market from the contract and compares the
+hash derived from the stored specification against the hash the market committed. A
+mismatch returns `INVALID` and never reaches the submission path. The engine performs the
+same check independently — a boundary this important is worth having twice, and neither
+can be bypassed by calling the other directly.
+
+Then: state must be `CLOSED` or `CHALLENGED`; the condition deadline must have passed; and
+`proposalRound` must be below the contract's limit of two. **A third proposal is not
+attempted**, rather than attempted and reverted.
+
+**Four terminal statuses, kept apart deliberately** (`RESOLVED`, `NEEDS_REVIEW`,
+`INSUFFICIENT_EVIDENCE`, `INVALID`, plus `RESOLUTION_FAILED`). `INSUFFICIENT_EVIDENCE` is
+pulled out of `NEEDS_REVIEW` because they call for different actions: one means nothing was
+read and the sources need looking at, the other means something was read and a person has
+to judge it. All of them are **HTTP 200** — a market the engine will not resolve is the
+system working, and a 4xx would tell a UI to show a failure banner where it should show
+reasoning.
+
+**A hash is still not an outcome.** `proposeResolution` returns a transaction hash, which
+is persisted *before* the wait so a process that dies mid-wait leaves a record pointing at
+something findable. `waitForTransaction` reports a mined revert as `FAILED`, and that is
+recorded as `PROPOSAL_REVERTED` with `submissionState: FAILED` — never as a proposal.
+
+**Challenges: the contract decides, the backend records.** Filing a challenge moves the
+challenger's own bond, so their wallet sends `challenge(reasonHash)`. The backend then
+attaches the argument behind that commitment, and refuses unless three things hold: the
+market is `CHALLENGED`, the on-chain `challenger` is the authenticated wallet, and
+`keccak256(reason)` equals the `challengeReasonHash` the contract stored. Without the third
+check this table would be a place for anyone to put words in a challenger's mouth.
+`challengeReasonHash` was added to `readMarket` for exactly this.
+
+`POST /challenge/prepare` exists because a browser cannot keccak256 without a library, and
+shipping one so the client could compute a protocol hash is what ADR-0001 forbids. The
+server hashes the bytes through `@covenant/shared`; the check that matters still happens
+later, against what the contract actually holds.
+
+**Finalization is left permissionless, because the contract left it permissionless.** The
+route requires no authentication and takes no arguments — requiring a login would invent a
+gate the protocol does not have, and liveness that depends on this backend is what ADR-0004
+refuses. The service checks the window before relaying so a caller gets "the window closes
+at T" instead of a reverted transaction; the contract's `ChallengePeriodActive` is the
+enforcement.
+
+**Settlement arithmetic is absent, and a test asserts its absence.**
+`resolution-service.test.ts` greps its own source for `payout =`, `previewClaim(`,
+`totalYes *` and `/ pool`. The contract owns winning stake, payout, refund mode, bonds and
+settlement state; the backend reads them.
+
+**The reconciler now checks the evidence behind the commitment.** For every market carrying
+a non-zero on-chain `evidenceHash` it asks three separate questions — do we hold the
+package at all, does it re-derive to the committed digest, and is it bound to *this*
+market's rules — because they call for different responses. A published digest nobody can
+resolve to a document is a commitment that cannot be checked, which is the failure this
+product exists to prevent.
+
+**The indexer needed no repair.** The M4 defect the brief describes — discovery depending
+on `markets.contract_address` — was found and fixed during M4 itself, by the first live
+bootstrap: six markets were discovered and their stakes recorded, then every later close,
+proposal, challenge, finalization and claim was silently missed. The watch set has since
+been the union of registered markets, markets already in `market_chain_state` (which the
+indexer populates itself), and markets created within the current range, with a regression
+test that fails against the old behaviour. Incremental checkpointing was fixed in the same
+milestone and validated by a real Neon disconnection that cost one 5,000-block window
+instead of 140,000 blocks. Both were re-read and confirmed rather than taken on trust.
+
+**The frontend is four files of plain HTML, CSS and ES modules, with no bundler.** There is
+no React and no Vite in this repository, so adding one would have meant a dependency tree
+and a build step for a page that exists to make an argument legible. The `build` script is
+an honest check rather than a no-op: it verifies every referenced asset exists and that
+every module parses under `node --check`, because a missing `<script src>` and a syntax
+error are both a blank page.
+
+**Three of the five hand-written function selectors were wrong.** With no bundler there is
+no viem in the page, so the four contract calls it sends are encoded by hand against
+selector constants. Three of the five were wrong when first written. `web-selectors.test.ts`
+now recomputes every one from the **compiled ABI** and fails on drift — the same argument
+`abi-parity.test.ts` makes for the backend's fragments, applied to the one place a hash
+could not be derived at run time.
+
+**The demo market is a numeric threshold against a public JSON API**, deliberately: it is
+the shape the deterministic layer can actually decide. `stargazers_count` from
+`api.github.com/repos/ethereum/go-ethereum`, compared `GREATER_THAN 40000` by
+`BigInt`-backed decimals. The answer is not in doubt — the repository has had far more than
+that for years — because a demo whose outcome is genuinely uncertain can fail live for
+reasons that have nothing to do with the software. The claim behind the outcome is a
+`JSON_POINTER`, so it is reproducible by anyone rather than resting on a model's reading.
+
 ### M5.3 — Deterministic evidence validation engine
 
 Everything code can decide, decided without a model:
@@ -901,6 +1043,156 @@ mechanics (absent from the MVP by design); authentication — there is no login,
 ## Tests performed
 
 Windows, Node v22.22.0.
+
+### M5.5–M5.7
+
+| Suite | Result |
+| --- | --- |
+| `packages/shared` | **pass** — 404 tests, 9 files, unchanged (nothing was added to the protocol layer) |
+| `packages/contracts` | **pass** — 156 tests, unchanged (no contract, ABI or vector was touched) |
+| `apps/backend` | **pass** — 571 tests, 19 files (was 523 / 16) |
+| `apps/web` | **pass** — reference check and module parse over 9 files |
+| `apps/backend` typecheck | **pass** — 0 errors |
+| `npm audit --omit=dev` | **0 vulnerabilities** |
+
+**1131 tests across three workspaces.** The backend suite still needs no network, no
+PostgreSQL and no API key — the signer is behind `ResolverChainWriter` with a scripted
+implementation, exactly as the model and the chain already were.
+
+New coverage:
+
+| File | Tests | Covers |
+| --- | --- | --- |
+| `resolution-service.test.ts` | 28 | **The gates** — a one-word specification edit refused as `RULES_HASH_MISMATCH` with nothing persisted; a market still `OPEN`; a condition not yet due; **a third proposal never attempted**; no acceptance criteria, and criteria that no longer validate, both reviewing rather than guessing; nothing retrieved reported as `INSUFFICIENT_EVIDENCE` and never as a `NO`. **A proposal** — built, persisted and submitted with the hash and block stored; the package re-derivable through `verifyEvidenceHash`; a dry run persisting what it would have sent and sending nothing; no resolver key producing a proposal that is not submitted; idempotence proven by scripting **one** model response and calling twice; **a mined revert recorded as `PROPOSAL_REVERTED`, not as a proposal**; a second proposal after a challenge. **The model cannot reach a transaction** — a contradiction of the deterministic verdict, non-JSON output and an unreachable provider each sending nothing. **Finalization** — refused while the window is open, performed once it closes, refused with no standing proposal. **Challenges** — recorded when the hash matches; refused for altered text, for a wallet that is not the on-chain challenger, and for a market that is not challenged; idempotent per round. **What it never does** — its own source grepped for `payout =`, `previewClaim(`, `totalYes *` and `/ pool`; `resolvedAt` following the injected clock exactly |
+| `resolution-routes.test.ts` | 11 | The payload carries the **whole chain**: `rulesHash`, sources with names, URLs, statuses and content hashes, checks with `expected`/`observed`, the model's reasoning and each claim's extraction method, the outcome with its `evidenceHash`, and the submission state with its transaction. **No settlement figure anywhere in the body.** A market the engine will not resolve answered **200** with its reason rather than a 4xx. `/resolution` carrying the challenge window, finalizability and the two-proposal limit. `/evidence` re-deriving to its own digest, and 404 rather than a hollow package. The plan route refusing an unapproved source reference and a non-creator wallet, and storing the **normalised** form so `encodes` is what will actually run |
+| `web-selectors.test.ts` | 4 | Every hand-written selector recomputed from the compiled ABI; the declared set exact; `approve` against the ERC-20 standard; **no selector for a function that moves someone else's funds** |
+| `abi-parity.test.ts` | +1 | The non-view list asserted as exactly `proposeResolution` and `finalize`; the ERC-20 surface proven to declare no `transfer`, `transferFrom`, `approve` or `permit` |
+
+**Three of the five hand-written frontend selectors were wrong**, and `web-selectors.test.ts`
+is why that is a sentence in this document rather than a silent failure at the demo. With
+no bundler there is no viem in the page, so the selectors are constants; a constant is only
+safe if something recomputes it.
+
+**A test that was passing for the wrong reason, found in this milestone.** The first version
+of `resolution-routes.test.ts` asserted the on-chain proposal view was present after
+resolving, and it failed — because `FakeResolverWriter` recorded the call without advancing
+the scripted market. The fixture, not the product, was wrong: on a real chain
+`proposeResolution` moves the market to `RESOLUTION_PROPOSED` at round 1. The double now
+applies that transition through its `onPropose` hook, so the assertion measures behaviour
+rather than the limits of the double.
+
+**Secrets sweep.** Every tracked file scanned for 32-byte hex values, Anthropic key
+prefixes and credentialed database URLs. Three hits, all deliberate fixtures —
+`sk-ant-test-key-do-not-use` and `postgresql://user:hunter2@…`, which exist so a test can
+assert a password never reaches a response body. `.env` is not tracked.
+
+#### Live results — chain and model, not fixtures
+
+| Check | Result |
+| --- | --- |
+| API boots, manifest loaded, `eth_chainId` == 1952 | ✅ |
+| Resolver key loaded, `canSubmitProposals` | ✅ `0xcb2b8052734cf2512bc70e959f98e5bdf17a7326` |
+| Migration applied to live PostgreSQL | ✅ `challenges` table + 5 columns |
+| Demo market created on X Layer testnet | ✅ `0x4201Dd224c7d50c819Cae14DabecE62C2d7413C9`, tx `0x32623a6e…`, block 38,873,615 |
+| On-chain `rulesHash` == `@covenant/shared` | ✅ `0xb2fb2e7a5b502e645934c4de939c062c6c745c9dc231bfe1e339d27a32222198` |
+| Wallet A stakes YES 100 TUSD | ✅ `0x8c66a0f1…` |
+| Wallet B stakes NO 300 TUSD | ✅ `0xae530fd9…` |
+| Market custody | ✅ 400.000000 TUSD |
+| Specification registered through the real API (SIWE) | ✅ `PENDING_ONCHAIN` |
+| Live model resolution | ✅ **5/6** scenarios; the sixth was a provider timeout, not a wrong answer |
+| Resolver proposes on-chain | ❌ **not reached** — see below |
+
+**The live model run is the result worth reading**, because M5.4 left an open question: on
+its second run *every* scenario that reached the provider was refused by `UNGROUNDED_VALUE`,
+and that was recorded as undiagnosed. It no longer happens.
+
+| Scenario | Outcome |
+| --- | --- |
+| `valid-no` | `PROPOSED NO` — a package assembled, validated, bound and hashed |
+| `precedence` | `PROPOSED YES` — the fallback decided, and only after the primary was on record as having failed |
+| `injection` | `NEEDS_REVIEW` / `MODEL_OUTPUT_UNGROUNDED` — a document instructing the model to resolve YES changed nothing |
+| `unavailable` | `NEEDS_REVIEW` / `INSUFFICIENT_EVIDENCE` — an unreadable source is not a `NO` |
+| `ambiguous` | `NEEDS_REVIEW` / `DETERMINISTIC_INCONCLUSIVE` — refused before the model was called |
+| `valid-yes` | `RESOLUTION_FAILED` / `PROVIDER_TIMEOUT` — the network, not the logic |
+
+**Two defects found by running this for real, both fixed:**
+
+1. **`createMarket` was declared with seven flat arguments; it takes a struct.** The wrong
+   ABI produced the selector for a function that does not exist, so every call reverted
+   with no reason string — and the revert looked like a parameter problem, which cost time
+   chasing timings that were never wrong. Fixed against
+   `packages/contracts/abi/MarketFactory.json`. This is exactly what `abi-parity.test.ts`
+   and `web-selectors.test.ts` prevent for the backend and the frontend; `tools/demo.ts` is
+   an operator script outside both, and it paid for that.
+2. **The connection pool was configured for a database that is always awake.** `pg`
+   defaults to no connect timeout and a 10s idle timeout, which on a serverless Postgres
+   that suspends means the first request after a quiet period fails with `ETIMEDOUT` and
+   the next with `Client network socket disconnected before secure TLS connection was
+   established`. Now: 30s connect timeout, 5s idle timeout, `keepAlive`, `max: 3`, a
+   pool-level `error` handler so a dropped socket cannot take the process down, and a
+   narrow retry (0.5s/2s/5s) for connection-class failures only — a constraint violation
+   still fails immediately.
+
+**The complete lifecycle ran on X Layer testnet, driven by this backend.**
+
+| Step | Result |
+| --- | --- |
+| Market created | `0x4201Dd224c7d50c819Cae14DabecE62C2d7413C9`, tx `0x32623a6e…`, block 38,873,615 |
+| On-chain `rulesHash` == `@covenant/shared` | ✅ `0xb2fb2e7a…` |
+| A stakes YES 100, B stakes NO 300 | ✅ `0x8c66a0f1…`, `0xae530fd9…` — 400.000000 custody |
+| Evidence read from the live approved source | ✅ HTTP 200, 6,479 bytes, `/stargazers_count` = 51304 |
+| Deterministic check | ✅ `51304 > 40000` → PASS → verdict `SATISFIED` |
+| Model concurred | ✅ YES at 9950 bps |
+| EvidencePackage hashed | ✅ `0x8741f11441d1eb7f71c6fc6ebee05faf41141268c72f4095067442e7f1d641e9` |
+| **Resolver proposed on-chain** | ✅ tx `0x2b826a8e…`, CONFIRMED |
+| Finalized after the challenge window | ✅ tx `0xdd29febf…` → YES |
+| Winner claimed | ✅ tx `0x0179a559…` |
+| Settlement | ✅ A 10100 → **10500**, B 9500, market **0.000000** residual |
+| Conservation across both wallets | ✅ 20000 → 20000 |
+| Served package re-derives to its own digest | ✅ `verified: true` |
+| Served digest == the digest the contract holds | ✅ `matchesOnChain: true` |
+
+**Four defects found by running against real infrastructure**, none of which any scripted
+double could have produced:
+
+1. **`createMarket` was declared with seven flat arguments; it takes a struct.** The wrong
+   ABI produced the selector for a function that does not exist, so every call reverted
+   with no reason string — and a bare revert looks like a parameter problem, which sent the
+   investigation after timings that were never wrong.
+2. **The connection pool was configured for a database that is always awake.** `pg`
+   defaults to no connect timeout and a 10s idle timeout. On a serverless Postgres that
+   suspends when idle, the first request after a quiet period fails `ETIMEDOUT` and the
+   next fails `Client network socket disconnected before secure TLS connection was
+   established`.
+3. **The SSRF `lookup` hook ignored `options.all`, and had therefore never worked.** Node 20
+   turned on `autoSelectFamily` by default; that path calls a custom `lookup` with
+   `{ all: true }` and expects an **array** of `{ address, family }`. Returning a bare
+   string makes every real connection fail with `ERR_INVALID_IP_ADDRESS`, which the adapter
+   classifies as `SOURCE_UNAVAILABLE: connection failed`.
+
+   **M5.2 recorded exactly this failure and concluded the machine had no outbound
+   network.** It did not. The adapter had never successfully retrieved anything, and the
+   conclusion was written into this document as a fact about the environment. A failure
+   vocabulary precise enough to explain an outage is precise enough to hide a defect behind
+   one, and the only thing that would have caught it is a live retrieval that *succeeds* —
+   which no test asserted, because every test used the fake adapter.
+4. **`resolvedAt` was captured before retrieval**, so every live package claimed a
+   resolution predating its own evidence and was refused by the v2.0 schema — the rule
+   working exactly as designed, against us. Retrieval takes real seconds; a frozen test
+   clock made start and finish identical and the ordering invisible.
+
+**M5.4's open question is closed.** It recorded that on its second live run every scenario
+reaching the provider was refused by `UNGROUNDED_VALUE`, "not yet diagnosed". The cause:
+the model was making claims whose value was *retrieval metadata* — the `retrievedAt`
+instant this system itself recorded — which by definition does not appear in the retrieved
+bytes. The grounding gate was correct every time; the prompt simply never said that
+metadata is not claimable. One paragraph added to the prompt, and the live run proposes.
+
+**Reconciliation reports two real historical gaps**, and finding them is the new evidence
+check working: M4's markets 5 and 6 committed the literal placeholder
+`covenant:m4:placeholder-evidence:round-1`, so the contract holds an evidence hash for
+which no package exists and their outcomes are unexplainable. The demo market is absent
+from the findings — its package is stored and re-derives.
 
 ### M5.4
 

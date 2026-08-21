@@ -68,6 +68,14 @@ export interface AppConfig {
   readonly chain: ChainConfig;
   readonly auth: AuthConfig;
   readonly evidence: EvidenceConfig;
+  readonly resolution: ResolutionConfig;
+  /**
+   * Browser origins permitted to call this API.
+   *
+   * Explicit, never `*`. The API carries bearer tokens, and a wildcard would let
+   * any page a user visits spend their session.
+   */
+  readonly corsOrigins: readonly string[];
 }
 
 /**
@@ -122,6 +130,29 @@ export interface ChainConfig {
   readonly pollIntervalMs: number;
   /** Operational override for the bootstrap block. Null means use the manifest. */
   readonly startBlockOverride: bigint | null;
+  /**
+   * How long a proposal transaction is waited on before the wait is abandoned.
+   *
+   * Abandoning the wait is not the same as failing: the record keeps the hash
+   * and the state stays `SUBMITTED`, because a transaction that lands a second
+   * later must not have been reported as failed.
+   */
+  readonly confirmationTimeoutMs: number;
+}
+
+/** Bounds on the AI resolution step. */
+export interface ResolutionConfig {
+  /**
+   * Below this, the engine returns `NEEDS_REVIEW` and proposes nothing.
+   *
+   * **Basis points, integer.** A floor for *proposing*, never a rule for
+   * settling — there is no confidence parameter in Solidity and no path from
+   * this number to a payout. A percentage float here would eventually be
+   * compared against an integer somewhere else.
+   */
+  readonly confidenceFloorBps: number;
+  /** Per-source ceiling on the evidence rendered into the prompt. */
+  readonly maxEvidenceCharsPerSource: number;
 }
 
 export interface AuthConfig {
@@ -267,6 +298,21 @@ const envSchema = z.object({
   EVIDENCE_ALLOWED_PORTS: z.string().default('443'),
   /** Comma-separated hostnames. Empty means no operator allowlist. */
   EVIDENCE_ALLOWED_HOSTS: z.string().default(''),
+
+  // --- M5.5–M5.7: resolution, submission, frontend ---------------------------
+  /**
+   * 7000 bps = 70%. The engine's own default, restated here so an operator can
+   * raise it without a code change. Raising it produces more reviews; lowering
+   * it does **not** make the system settle on weaker evidence, because the
+   * deterministic verdict still has to be conclusive and the model still has to
+   * concur with it.
+   */
+  RESOLUTION_CONFIDENCE_FLOOR_BPS: integerFromEnv('RESOLUTION_CONFIDENCE_FLOOR_BPS').default('7000'),
+  RESOLUTION_MAX_EVIDENCE_CHARS: integerFromEnv('RESOLUTION_MAX_EVIDENCE_CHARS').default('6000'),
+  /** How long to wait for a proposal transaction before abandoning the wait. */
+  CHAIN_CONFIRMATION_TIMEOUT_MS: integerFromEnv('CHAIN_CONFIRMATION_TIMEOUT_MS').default('180000'),
+  /** Comma-separated browser origins. Empty disables CORS entirely. */
+  CORS_ORIGINS: z.string().default('http://localhost:5173,http://127.0.0.1:5173'),
 });
 
 /** Split a comma-separated environment list, dropping empties. */
@@ -386,7 +432,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       pollIntervalMs: value.INDEXER_POLL_INTERVAL_MS,
       startBlockOverride:
         value.INDEXER_START_BLOCK === undefined ? null : BigInt(value.INDEXER_START_BLOCK),
+      confirmationTimeoutMs: value.CHAIN_CONFIRMATION_TIMEOUT_MS,
     },
+    resolution: {
+      confidenceFloorBps: value.RESOLUTION_CONFIDENCE_FLOOR_BPS,
+      maxEvidenceCharsPerSource: value.RESOLUTION_MAX_EVIDENCE_CHARS,
+    },
+    corsOrigins: commaList(value.CORS_ORIGINS),
     auth: {
       domain: value.AUTH_DOMAIN,
       uri: value.AUTH_URI,
@@ -454,5 +506,9 @@ export function describeConfig(config: AppConfig): Record<string, unknown> {
     evidenceMaxAttempts: config.evidence.maxAttempts,
     evidenceAllowedPorts: config.evidence.allowedPorts.join(','),
     evidenceHostAllowlistSize: config.evidence.allowedHosts.length,
+    // Policy, not secrets, and both are worth having in the startup log: "why
+    // did that market not resolve" is often answered by the floor.
+    resolutionConfidenceFloorBps: config.resolution.confidenceFloorBps,
+    corsOrigins: config.corsOrigins.join(','),
   };
 }

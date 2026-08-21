@@ -75,6 +75,14 @@ export interface OnChainMarket {
 
   readonly evidenceHash: Hex;
   readonly challenger: Address;
+  /**
+   * keccak256 of the challenger's off-chain argument.
+   *
+   * Read so the backend can verify that a challenge document offered to it is
+   * the one the challenger actually committed. Without it, anyone could attach
+   * any text to someone else's challenge.
+   */
+  readonly challengeReasonHash: Hex;
   readonly challengedOutcome: OnChainOutcome;
   readonly bondOutstanding: boolean;
   readonly bondRefundable: boolean;
@@ -216,4 +224,49 @@ export interface ChainClient {
   getTransaction(hash: Hex): Promise<TransactionOutcome | null>;
   /** Poll until confirmed, failed, or `timeoutMs` elapses. */
   waitForTransaction(hash: Hex, timeoutMs?: number): Promise<TransactionOutcome>;
+}
+
+// --- the write port ---------------------------------------------------------
+
+/**
+ * The two transactions this backend is ever allowed to send.
+ *
+ * Deliberately a separate, tiny interface rather than methods on `ChainClient`:
+ * a component that only reads should not be handed an object that can sign, and
+ * separating them makes "who can transact" a question answered by looking at
+ * which type a constructor asks for.
+ *
+ * **What is not here matters more than what is.** There is no `stake`, no
+ * `claim`, no `withdrawRefund`, no `challenge`, no token `transfer` or
+ * `approve`, and no factory call. The resolver key cannot reach a fund-moving
+ * function through this interface because no such method exists on it, and the
+ * ABI the implementation is built from declares no such function either.
+ *
+ * - `proposeResolution` records an outcome and an evidence commitment. It moves
+ *   no money and names no recipient; the contract's own `NotProposer` check is
+ *   what authorises it.
+ * - `finalize` is **permissionless on the contract** — anyone may call it once
+ *   the challenge window has closed, and it takes no arguments, so calling it
+ *   cannot express a preference about the result. The backend performing it is
+ *   a convenience for liveness, not an authority.
+ */
+export interface ResolverChainWriter {
+  /** The address the resolver key controls. Server-side identity, never client input. */
+  readonly resolverAddress: Address;
+
+  /**
+   * Submit a proposal.
+   *
+   * @returns the transaction hash only. A hash is not an outcome (§16) — the
+   *   caller must wait for confirmation through `ChainClient.waitForTransaction`
+   *   before treating the proposal as real.
+   */
+  proposeResolution(input: {
+    readonly market: Address;
+    readonly outcome: Exclude<OnChainOutcome, 'UNSET'>;
+    readonly evidenceHash: Hex;
+  }): Promise<Hex>;
+
+  /** Call `finalize()`. Reverts on-chain if the window has not closed. */
+  finalize(market: Address): Promise<Hex>;
 }

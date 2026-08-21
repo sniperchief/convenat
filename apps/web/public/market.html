@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Covenant — market</title>
+    <link rel="stylesheet" href="/app.css" />
+    <script src="/config.js"></script>
+  </head>
+  <body>
+    <header class="top">
+      <span class="brand">Covenant</span>
+      <span class="tagline">Condition compilation and resolution infrastructure</span>
+      <nav>
+        <a href="/">Markets</a>
+        <a href="/create.html">Create</a>
+        <span id="who" class="small muted"></span>
+        <button id="signin" class="secondary">Sign out</button>
+      </nav>
+    </header>
+
+    <main>
+      <div id="status"></div>
+
+      <!-- The agreement ---------------------------------------------------- -->
+      <div class="panel">
+        <h1 id="question">Loading…</h1>
+        <div class="stack small" id="headline"></div>
+      </div>
+
+      <div class="row">
+        <div class="panel">
+          <h2>The agreement</h2>
+          <div id="agreement"></div>
+        </div>
+        <div class="panel">
+          <h2>On-chain state</h2>
+          <div id="chain"></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Approved sources</h2>
+        <p class="muted small">
+          Ordered: position 0 is primary. The resolver may read <em>only</em> these, in this order,
+          and reading a fallback is legitimate only when the source before it is on record as
+          having failed.
+        </p>
+        <div id="sources"></div>
+      </div>
+
+      <!-- Stake ------------------------------------------------------------- -->
+      <div class="panel" id="stake-panel" hidden>
+        <h2>Stake</h2>
+        <p class="muted small">
+          Two transactions from your own wallet: approve the settlement token, then stake. The
+          backend never moves your funds and has no function that could.
+        </p>
+        <div class="row">
+          <div>
+            <label for="stake-amount">Amount (base units)</label>
+            <input id="stake-amount" value="100000000" />
+          </div>
+          <div>
+            <label for="stake-side">Side</label>
+            <select id="stake-side">
+              <option value="1">YES</option>
+              <option value="2">NO</option>
+            </select>
+          </div>
+        </div>
+        <div class="stack" style="margin-top: 14px">
+          <button id="approve" class="secondary">1 · Approve</button>
+          <button id="stake">2 · Stake</button>
+        </div>
+      </div>
+
+      <!-- THE PRODUCT: why this outcome ------------------------------------ -->
+      <div class="panel">
+        <h2>Why this outcome</h2>
+        <p class="muted small">
+          The resolution chain, in order. Nothing below is taken on trust: the checks record what
+          was compared and what was found, the sources record what was read and its hash, and the
+          evidence package re-derives to the digest committed on-chain.
+        </p>
+        <div class="stack" style="margin-bottom: 16px">
+          <button id="resolve">Run resolution</button>
+          <button id="dry-run" class="secondary">Dry run (propose nothing)</button>
+          <button id="finalize" class="secondary">Finalize</button>
+          <button id="refresh" class="secondary">Refresh</button>
+        </div>
+        <div id="resolution"></div>
+      </div>
+
+      <!-- Challenge --------------------------------------------------------- -->
+      <div class="panel" id="challenge-panel" hidden>
+        <h2>Challenge</h2>
+        <div id="challenge-state"></div>
+        <div id="challenge-form" hidden>
+          <p class="muted small">
+            Filing a challenge moves <em>your</em> bond, so your wallet sends it. The contract
+            stores <code>keccak256</code> of your argument; this page then records the text behind
+            that hash, and the backend refuses any text that does not match it. Whether the
+            challenge wins is decided by the contract at finalization — not here.
+          </p>
+          <label for="challenge-reason">Your argument</label>
+          <textarea id="challenge-reason" placeholder="Why the proposed outcome is wrong, and what the evidence actually shows."></textarea>
+          <div class="stack" style="margin-top: 12px">
+            <button id="file-challenge">File challenge on-chain</button>
+            <span class="small muted">bond: <span id="bond-amount">—</span></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Settlement -------------------------------------------------------- -->
+      <div class="panel" id="settle-panel" hidden>
+        <h2>Settlement</h2>
+        <p class="muted small">
+          Every figure here is the contract's. The backend computes no payout — it reads one.
+        </p>
+        <div id="settlement"></div>
+        <div class="stack" style="margin-top: 14px">
+          <button id="claim">Claim winnings</button>
+          <button id="refund" class="secondary">Withdraw refund</button>
+          <button id="claim-bond" class="secondary">Claim challenge bond</button>
+        </div>
+      </div>
+
+      <!-- Chain log --------------------------------------------------------- -->
+      <div class="panel">
+        <h2>Chain log</h2>
+        <p class="muted small">Every event the indexer observed for this market, in order.</p>
+        <div id="events"></div>
+      </div>
+    </main>
+
+    <script type="module" src="/market.mjs"></script>
+  </body>
+</html>

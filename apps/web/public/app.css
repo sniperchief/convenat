@@ -1,0 +1,181 @@
+/*
+ * One stylesheet, no framework.
+ *
+ * The visual job here is narrow: make the resolution chain legible.
+ * RULES → EVIDENCE → CHECKS → REASONING → OUTCOME → ON-CHAIN is the product, so
+ * the styles that carry weight are the ones that separate those stages and mark
+ * where each number came from.
+ */
+
+:root {
+  --bg: #0f1115;
+  --panel: #161a21;
+  --panel-2: #1c222b;
+  --line: #2a323f;
+  --text: #e6e9ef;
+  --muted: #8b95a7;
+  --accent: #6ea8fe;
+  --yes: #4ade80;
+  --no: #fb7185;
+  --warn: #fbbf24;
+  --invalid: #a78bfa;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+a { color: var(--accent); }
+
+header.top {
+  border-bottom: 1px solid var(--line);
+  padding: 14px 24px;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+  background: var(--panel);
+}
+
+header.top .brand { font-weight: 650; letter-spacing: 0.2px; }
+header.top .tagline { color: var(--muted); font-size: 13px; }
+header.top nav { margin-left: auto; display: flex; gap: 16px; align-items: center; }
+
+main { max-width: 1080px; margin: 0 auto; padding: 24px; }
+
+h1 { font-size: 22px; margin: 0 0 4px; }
+h2 { font-size: 16px; margin: 0 0 12px; letter-spacing: 0.3px; }
+h3 { font-size: 13px; margin: 0 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px; }
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 18px;
+  margin-bottom: 16px;
+}
+
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+.mono { font-family: var(--mono); font-size: 12.5px; word-break: break-all; }
+
+.row { display: flex; gap: 16px; flex-wrap: wrap; }
+.row > * { flex: 1 1 260px; }
+
+dl.facts { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; }
+dl.facts dt { color: var(--muted); font-size: 13px; }
+dl.facts dd { margin: 0; font-size: 13px; word-break: break-word; }
+
+.badge {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+}
+.badge.yes { color: var(--yes); border-color: #24603d; }
+.badge.no { color: var(--no); border-color: #6b2833; }
+.badge.invalid { color: var(--invalid); border-color: #4a3a70; }
+.badge.warn { color: var(--warn); border-color: #6b5320; }
+.badge.pass { color: var(--yes); border-color: #24603d; }
+.badge.fail { color: var(--no); border-color: #6b2833; }
+.badge.indeterminate { color: var(--warn); border-color: #6b5320; }
+
+/* Where a number came from. The chain is authoritative; a cache is not. */
+.origin { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; }
+
+button {
+  background: var(--accent);
+  color: #0b1220;
+  border: 0;
+  border-radius: 7px;
+  padding: 8px 14px;
+  font-weight: 640;
+  font-size: 14px;
+  cursor: pointer;
+}
+button.secondary { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+input, textarea, select {
+  width: 100%;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 8px 10px;
+  font: inherit;
+}
+textarea { min-height: 96px; font-family: var(--mono); font-size: 12.5px; }
+label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 4px; }
+
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+
+.market-card {
+  display: block;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 10px;
+  background: var(--panel);
+  text-decoration: none;
+  color: inherit;
+}
+.market-card:hover { border-color: var(--accent); }
+.market-card .q { font-weight: 600; margin-bottom: 6px; }
+
+/* --- the resolution chain -------------------------------------------------
+ * Each stage is a numbered step with a rule down the left, so the eye follows
+ * rules → evidence → checks → reasoning → outcome → chain in order.
+ */
+.chain { border-left: 2px solid var(--line); margin-left: 10px; padding-left: 20px; }
+.stage { position: relative; padding-bottom: 22px; }
+.stage::before {
+  content: attr(data-step);
+  position: absolute;
+  left: -31px;
+  top: 0;
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+}
+.stage.done::before { color: var(--yes); border-color: #24603d; }
+.stage.blocked::before { color: var(--warn); border-color: #6b5320; }
+
+blockquote.reasoning {
+  margin: 0;
+  padding: 12px 14px;
+  background: var(--panel-2);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 7px 7px 0;
+  font-size: 14px;
+  white-space: pre-wrap;
+}
+
+.notice {
+  padding: 10px 14px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+.notice.error { border-color: #6b2833; color: #ffc9d0; }
+.notice.ok { border-color: #24603d; color: #bdf0d0; }
+
+.stack { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }

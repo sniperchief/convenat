@@ -163,7 +163,14 @@ is NEEDS_REVIEW.
 
 Every claim you return must cite the source ids it came from and carry the value
 exactly as that source renders it. A claim you looked for and did not find is
-support "UNSUPPORTED" with a null value — record it rather than dropping it.`;
+support "UNSUPPORTED" with a null value — record it rather than dropping it.
+
+A claim's value must be text that appears **inside the retrieved content itself**.
+Do not make claims about the metadata surrounding a source — its retrieval time,
+its URL, its status, its content hash, or the deadline. Those are facts this
+system recorded, not facts the source published, and a claim carrying one is
+rejected as ungrounded because it cannot be traced to retrieved bytes. Mention
+them in your reasoning if they matter; do not turn them into claims.`;
 
 /** Identifies this prompt in logs and in the resolution record. */
 export const RESOLVER_PROMPT_ID = `resolution-analyst@${RESOLVER_VERSION}`;

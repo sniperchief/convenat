@@ -7,10 +7,23 @@
  * line, and it is why the route tests exercise the same handlers production
  * runs rather than a parallel implementation.
  *
- * Two routes deliberately return 501: `/resolve` and `/challenge` need the
- * resolution engine, which is Milestone 5. Answering them with plausible-looking
- * data would be worse than answering honestly — a fabricated proposal is
- * exactly the failure this product exists to prevent.
+ * A route answers honestly or not at all. Where a capability is genuinely
+ * absent — no chain configured, no resolver key — the route says so with a 501
+ * and a reason, because a fabricated proposal is exactly the failure this
+ * product exists to prevent.
+ *
+ * ## Who may do what
+ *
+ * | Route | Who |
+ * | --- | --- |
+ * | `POST /api/markets/compile`, `POST /api/markets` | The authenticated creator; the hashed `creator` must be their wallet |
+ * | `POST /api/markets/:id/resolve` | Any authenticated wallet may *trigger* it. The **resolver identity is the server's key** and is never taken from a request |
+ * | `POST /api/markets/:id/challenge` | The authenticated wallet, and only if the contract already records it as the challenger |
+ * | `POST /api/markets/:id/finalize` | Anyone. `finalize()` is permissionless on the contract and takes no arguments |
+ * | Everything else | Public reads of public facts |
+ *
+ * Triggering a resolution is not an authority over its result: the outcome comes
+ * from the evidence and the checks, and the caller cannot influence either.
  */
 
 import { randomBytes } from 'node:crypto';
@@ -19,11 +32,16 @@ import Fastify from 'fastify';
 
 import {
   buildRulesCommitment,
+  hashCanonicalText,
   validateConditionSpec,
+  verifyEvidenceHash,
   type ApiSuccess,
+  type ChallengeMarketResponse,
   type CompileMarketResponse,
   type EvidenceRecord as EvidenceApiRecord,
+  type FinalizeMarketResponse,
   type GetMarketResponse,
+  type GetResolutionResponse,
   type ListMarketsResponse,
   type MarketSummary,
   type RegisterMarketResponse,
@@ -48,10 +66,14 @@ import type {
   MarketRecord,
   Repositories,
 } from '../repositories/types.js';
+import type { MarketResolutionService } from '../resolution/service.js';
+import { validateValidationPlan } from '../validation/plan.js';
+import { toResolutionDetail } from './resolution-view.js';
 import {
   DEFAULT_PAGE_SIZE,
   authNonceRequestSchema,
   authVerifyRequestSchema,
+  challengePrepareRequestSchema,
   challengeRequestSchema,
   compileRequestSchema,
   listMarketsQuerySchema,
@@ -59,6 +81,7 @@ import {
   marketIdParamSchema,
   registerMarketRequestSchema,
   resolveRequestSchema,
+  validationPlanRequestSchema,
 } from './schemas.js';
 
 export interface ServerDependencies {
@@ -79,6 +102,21 @@ export interface ServerDependencies {
     readonly factory: Address;
     readonly settlementToken: Address;
   } | null;
+  /**
+   * The resolution service, when one is configured.
+   *
+   * Null for the same reason `chain` may be null: a backend can serve the
+   * compiler and the market registry without an evidence pipeline. `/resolve`
+   * then returns 501 with the reason rather than pretending.
+   */
+  readonly resolution?: MarketResolutionService | null;
+  /**
+   * Origins the browser client is served from, for CORS.
+   *
+   * An explicit list, never `*`: this API carries bearer tokens, and a wildcard
+   * would let any page a user visits spend their session.
+   */
+  readonly corsOrigins?: readonly string[];
   /** Injected so tests can freeze time. */
   readonly now?: () => Date;
 }
@@ -109,6 +147,8 @@ export function buildServer(dependencies: ServerDependencies) {
   const { config, repositories, compiler, auth } = dependencies;
   const chain = dependencies.chain ?? null;
   const contracts = dependencies.contracts ?? null;
+  const resolution = dependencies.resolution ?? null;
+  const corsOrigins = new Set((dependencies.corsOrigins ?? []).map((origin) => origin.toLowerCase()));
   const now = dependencies.now ?? ((): Date => new Date());
 
   const app = Fastify({
@@ -117,6 +157,30 @@ export function buildServer(dependencies: ServerDependencies) {
     // on errors so a user-reported failure can be found in the log.
     disableRequestLogging: false,
   });
+
+  // --- CORS ----------------------------------------------------------------
+  //
+  // Hand-rolled rather than a plugin, because the policy is four lines and the
+  // one property that matters is that it is not `*`. The origin is echoed only
+  // when it is on the configured list, so a page the user did not intend to
+  // trust cannot read a response carrying their session's data.
+  if (corsOrigins.size > 0) {
+    app.addHook('onRequest', async (request, reply) => {
+      const origin = request.headers.origin;
+      if (typeof origin === 'string' && corsOrigins.has(origin.toLowerCase())) {
+        void reply.header('access-control-allow-origin', origin);
+        void reply.header('vary', 'Origin');
+        void reply.header('access-control-allow-headers', 'content-type, authorization');
+        void reply.header('access-control-allow-methods', 'GET, POST, OPTIONS');
+        void reply.header('access-control-max-age', '600');
+      }
+      if (request.method === 'OPTIONS') {
+        // Answered here rather than falling through to the 404 handler, which
+        // would make every preflight look like a routing bug in the log.
+        await reply.status(204).send();
+      }
+    });
+  }
 
   app.setErrorHandler((error, request, reply) => {
     const { status, body } = toHttpError(error);
@@ -150,6 +214,11 @@ export function buildServer(dependencies: ServerDependencies) {
       // endpoint that made an RPC call would fail for reasons outside this
       // process and would be useless as a liveness probe.
       chainConfigured: chain !== null,
+      resolutionConfigured: resolution !== null,
+      // Whether a key capable of proposing is loaded — never the key, and never
+      // the address's balance or any other fact that would need an RPC call.
+      resolverConfigured: resolution?.canSubmit ?? false,
+      resolverAddress: resolution?.resolverAddress ?? null,
       confirmations: config.chain.confirmations,
       time: now().toISOString(),
     }),
@@ -314,10 +383,11 @@ export function buildServer(dependencies: ServerDependencies) {
   app.post('/api/markets', async (request, reply) => {
     const wallet = await requireWallet(request.headers.authorization);
 
-    const body = parse<{ specification: Record<string, unknown>; rulesHash: string }>(
-      registerMarketRequestSchema,
-      request.body,
-    );
+    const body = parse<{
+      specification: Record<string, unknown>;
+      rulesHash: string;
+      validationPlan?: Record<string, unknown>;
+    }>(registerMarketRequestSchema, request.body);
 
     // The shared schema is the only validator for a specification.
     const validated = validateConditionSpec(body.specification);
@@ -369,6 +439,10 @@ export function buildServer(dependencies: ServerDependencies) {
       ]);
     }
 
+    // The plan is validated before anything is written, so a market is never
+    // registered alongside criteria that would fail at resolution time.
+    const plan = body.validationPlan === undefined ? null : parseValidationPlan(body.validationPlan, spec.approvedSources.length);
+
     const at = now();
     await repositories.wallets.touch(spec.creator, at);
     await repositories.compilations.save({
@@ -394,11 +468,24 @@ export function buildServer(dependencies: ServerDependencies) {
       question: spec.question,
       specification: spec,
       canonical: commitment.canonical,
+      validationPlan: plan,
       deadline: spec.deadline,
       tradingEndsAt: spec.settlement.tradingEndsAt,
       status: 'PENDING_ONCHAIN',
       at,
     });
+
+    // `register` is idempotent on `rulesHash` and returns the existing row
+    // unchanged, so a plan supplied on a re-registration would be silently
+    // dropped. Writing it explicitly is what makes "register, then add criteria"
+    // work as a two-step flow.
+    if (plan !== null) {
+      await repositories.markets.setValidationPlan({
+        rulesHash: commitment.rulesHash,
+        plan,
+        at,
+      });
+    }
 
     request.log.info({ rulesHash: commitment.rulesHash }, 'specification registered');
 
@@ -447,7 +534,7 @@ export function buildServer(dependencies: ServerDependencies) {
 
   app.get('/api/markets/:id', async (request, reply) => {
     const market = await resolveMarket(request.params);
-    const resolution = await repositories.resolutions.findLatestByRulesHash(market.rulesHash);
+    const latestResolution = await repositories.resolutions.findLatestByRulesHash(market.rulesHash);
     const chainState = await repositories.chainState.findByRulesHash(
       config.chainId,
       market.rulesHash,
@@ -466,12 +553,30 @@ export function buildServer(dependencies: ServerDependencies) {
     // are added alongside rather than forced into `challenge`, whose type
     // describes an off-chain challenge record the resolution engine will
     // produce in M5 and which does not exist yet.
+    const challengeDoc = await repositories.challenges.findByRulesHash(market.rulesHash);
+
     const response: GetMarketResponse & Record<string, unknown> = {
       ...toMarketSummary(market, chainState),
       specification: market.specification,
       rulesHashVerified: recomputed.rulesHash === market.rulesHash,
-      resolution: resolution === null ? null : toResolutionProposal(resolution, market),
-      challenge: null,
+      resolution: latestResolution === null ? null : toResolutionProposal(latestResolution, market, chainState),
+      // The full "why", so the detail page needs one request rather than two.
+      resolutionDetail:
+        latestResolution === null ? null : toResolutionDetail(latestResolution, market),
+      validationPlan: market.validationPlan,
+      challenge:
+        challengeDoc === null
+          ? null
+          : {
+              marketId: market.chainMarketId ?? market.rulesHash,
+              challenger: challengeDoc.challenger as `0x${string}`,
+              reasonHash: challengeDoc.reasonHash,
+              reason: challengeDoc.reason,
+              bondBaseUnits: challengeDoc.bond,
+              challengedAt: challengeDoc.challengedAt,
+              txHash: challengeDoc.txHash as `0x${string}`,
+              bondRefunded: null,
+            },
       challengeOnChain: toChallengeView(chainState),
       creationTxHash: (creation?.transactionHash ?? null) as `0x${string}` | null,
       // Everything the future frontend needs to render this market (§33),
@@ -499,35 +604,242 @@ export function buildServer(dependencies: ServerDependencies) {
       throw new NotFoundError('No evidence has been published for this market yet.');
     }
 
-    const response: EvidenceApiRecord = {
+    // Re-derived, not asserted. `verified: true` as a constant would be exactly
+    // the theatre this product exists to replace — the point of publishing a
+    // package is that the digest can be recomputed from it, so the server does
+    // that too rather than repeating what it stored.
+    const verified = verifyEvidenceHash(record.package, record.evidenceHash);
+
+    const chainState = await repositories.chainState.findByRulesHash(
+      config.chainId,
+      market.rulesHash,
+    );
+    const committed = chainState?.evidenceHash ?? null;
+
+    const response: EvidenceApiRecord & Record<string, unknown> = {
       marketId: market.chainMarketId ?? market.rulesHash,
       evidenceHash: record.evidenceHash,
       package: record.package,
-      verified: true,
+      verified,
+      // Whether the served document is the one the *contract* holds, which is a
+      // different and stronger question than whether it re-hashes to itself.
+      committedOnChain: committed,
+      matchesOnChain:
+        committed === null
+          ? null
+          : committed.toLowerCase() === record.evidenceHash.toLowerCase(),
     };
     return reply.status(200).send(ok(response));
   });
 
+  // --- PUT /api/markets/:id/validation-plan -------------------------------
+
+  /**
+   * Attach deterministic acceptance criteria to a market.
+   *
+   * Restricted to the creator: the plan decides what the market settles on, and
+   * it is not inside `rulesHash` (ADR-0017), so the only defensible holder of it
+   * is the wallet that approved the rules in the first place.
+   */
+  app.post('/api/markets/:id/validation-plan', async (request, reply) => {
+    const wallet = await requireWallet(request.headers.authorization);
+    const market = await resolveMarket(request.params);
+    assertOwns(wallet, market.creator, 'market');
+
+    const body = parse<{ validationPlan: Record<string, unknown> }>(
+      validationPlanRequestSchema,
+      request.body,
+    );
+    const plan = parseValidationPlan(
+      body.validationPlan,
+      market.specification.approvedSources.length,
+    );
+
+    const updated = await repositories.markets.setValidationPlan({
+      rulesHash: market.rulesHash,
+      plan,
+      at: now(),
+    });
+    if (updated === null) throw new NotFoundError('No such market.');
+
+    return reply.status(200).send(ok({ rulesHash: market.rulesHash, validationPlan: plan }));
+  });
+
   // --- POST /api/markets/:id/resolve --------------------------------------
 
-  app.post('/api/markets/:id/resolve', async (request) => {
+  /**
+   * Run the resolution pipeline.
+   *
+   * Authenticated, but not privileged: *triggering* a resolution is not an
+   * authority over its result. The outcome comes from the approved sources and
+   * the committed criteria, the resolver identity is the server's key, and
+   * nothing in the request body can reach either.
+   */
+  app.post('/api/markets/:id/resolve', async (request, reply) => {
+    // Order matters, and it is the M3 order: who you are, then whether the
+    // request is well-formed, then whether the capability exists, then whether
+    // the thing exists. Validating last would let a malformed request be
+    // answered with a 501 that says nothing about what was wrong with it.
+    await requireWallet(request.headers.authorization);
     parse(marketIdParamSchema, request.params);
-    parse(resolveRequestSchema, request.body ?? {});
-    throw new NotImplementedError(
-      'Resolution is not available yet. The resolution engine, evidence retrieval and on-chain ' +
-        'proposal arrive in a later milestone; until then this endpoint will not return an outcome.',
+    const body = parse<{ force?: boolean; dryRun?: boolean }>(
+      resolveRequestSchema,
+      request.body ?? {},
     );
+
+    const service = requireResolution();
+    const market = await resolveMarket(request.params);
+
+    const outcome = await service.resolveMarket(market, {
+      ...(body.force === undefined ? {} : { force: body.force }),
+      ...(body.dryRun === undefined ? {} : { dryRun: body.dryRun }),
+    });
+
+    request.log.info(
+      {
+        rulesHash: market.rulesHash,
+        status: outcome.status,
+        reason: outcome.reason,
+        submission: outcome.submissionState,
+      },
+      'resolution attempted',
+    );
+
+    // Every terminal state is a 200. A market the engine will not resolve is the
+    // system working, not a client error — and a 4xx would tell a UI to show a
+    // failure banner where it should show the reasoning.
+    const detail =
+      outcome.persisted === null
+        ? syntheticDetail(outcome, market)
+        : toResolutionDetail(outcome.persisted, market);
+
+    return reply.status(200).send(ok(detail));
+  });
+
+  // --- GET /api/markets/:id/resolution ------------------------------------
+
+  app.get('/api/markets/:id/resolution', async (request, reply) => {
+    const market = await resolveMarket(request.params);
+    const history = await repositories.resolutions.listByRulesHash(market.rulesHash);
+    const details = history.map((record) => toResolutionDetail(record, market));
+
+    const response: GetResolutionResponse = {
+      marketId: market.chainMarketId ?? market.rulesHash,
+      latest: details[0] ?? null,
+      history: details,
+      onChain: await readProposalView(market),
+    };
+    return reply.status(200).send(ok(response));
+  });
+
+  // --- POST /api/markets/:id/challenge/prepare -----------------------------
+
+  /**
+   * Hash a challenge argument, so the challenger can commit exactly those bytes.
+   *
+   * This exists because the protocol has **one** implementation of every hash
+   * (ADR-0001) and it lives in `@covenant/shared`. A browser cannot keccak256
+   * without a library, and shipping one so the client could compute a protocol
+   * hash is precisely what that ADR forbids — two implementations of one digest
+   * eventually disagree, and the disagreement surfaces as a challenge the
+   * contract rejects.
+   *
+   * Nothing is stored and nothing is decided here. The value returned is
+   * `keccak256(utf8(reason))` and the caller is free to compute it themselves;
+   * the check that matters happens later, when the recorded text is compared
+   * against what the contract actually holds.
+   */
+  app.post('/api/markets/:id/challenge/prepare', async (request, reply) => {
+    await requireWallet(request.headers.authorization);
+    parse(marketIdParamSchema, request.params);
+    const body = parse<{ reason: string }>(challengePrepareRequestSchema, request.body);
+    await resolveMarket(request.params);
+    return reply.status(200).send(ok({ reasonHash: hashCanonicalText(body.reason) }));
   });
 
   // --- POST /api/markets/:id/challenge -------------------------------------
 
-  app.post('/api/markets/:id/challenge', async (request) => {
+  /**
+   * Record the argument behind a challenge that already exists on-chain.
+   *
+   * The backend does not file the challenge and does not judge it. Filing moves
+   * the challenger's own bond, so their wallet sends `challenge(reasonHash)`;
+   * whether the challenge wins is decided by `finalize()` comparing the
+   * replacement outcome against the challenged one. This endpoint attaches the
+   * text behind the committed hash, and refuses anything that does not match.
+   */
+  app.post('/api/markets/:id/challenge', async (request, reply) => {
+    const wallet = await requireWallet(request.headers.authorization);
     parse(marketIdParamSchema, request.params);
-    parse(challengeRequestSchema, request.body);
-    throw new NotImplementedError(
-      'Challenges are not available yet. Filing one requires an on-chain proposal to contest and ' +
-        'a bond transaction to verify, both of which arrive in a later milestone.',
-    );
+    const body = parse<{ reason: string; txHash: string }>(challengeRequestSchema, request.body);
+
+    const service = requireResolution();
+    const market = await resolveMarket(request.params);
+    const result = await service.recordChallenge({
+      market,
+      challenger: wallet.address,
+      reason: body.reason,
+      txHash: body.txHash,
+    });
+
+    if (!result.ok) {
+      // A 409: the request is well-formed and the caller may be entitled to
+      // challenge — the *state* is what refuses it.
+      throw new ValidationError(result.detail, [{ path: 'txHash', message: result.code }]);
+    }
+
+    const response: ChallengeMarketResponse = {
+      marketId: market.chainMarketId ?? market.rulesHash,
+      challenger: result.onChain.challenger,
+      reasonHash: result.reasonHash,
+      reason: body.reason,
+      bondBaseUnits: result.onChain.challengeBond.toString(),
+      challengedAt: new Date(result.onChain.challengedAt * 1000).toISOString(),
+      txHash: body.txHash as `0x${string}`,
+      // Null while the review is outstanding: whether the bond comes back is
+      // decided at finalization, by the contract, and claiming to know now would
+      // be a guess about someone else's money.
+      bondRefunded:
+        result.onChain.state === 'FINALIZED' || result.onChain.state === 'SETTLED'
+          ? result.onChain.bondRefundable
+          : null,
+    };
+    return reply.status(201).send(ok(response));
+  });
+
+  // --- POST /api/markets/:id/finalize --------------------------------------
+
+  /**
+   * Make a standing proposal final.
+   *
+   * Unauthenticated on purpose: `finalize()` is permissionless on the contract,
+   * takes no arguments, and can only be called once the challenge window has
+   * closed. Requiring a login here would invent a gate the protocol does not
+   * have — and liveness that depends on this backend is exactly what ADR-0004
+   * refuses.
+   */
+  app.post('/api/markets/:id/finalize', async (request, reply) => {
+    parse(marketIdParamSchema, request.params);
+    const service = requireResolution();
+    const market = await resolveMarket(request.params);
+
+    if (market.contractAddress === null) {
+      throw new ValidationError('This market has not been created on-chain yet.', [
+        { path: 'id', message: 'no contract address' },
+      ]);
+    }
+
+    const result = await service.finalizeMarket(market);
+    const response: FinalizeMarketResponse = {
+      marketId: market.chainMarketId ?? market.rulesHash,
+      submitted: result.submitted,
+      txHash: result.txHash === null ? null : (result.txHash as `0x${string}`),
+      state: result.onChain.state,
+      finalOutcome: result.onChain.finalOutcome,
+      refundMode: result.onChain.refundMode,
+      detail: result.detail,
+    };
+    return reply.status(200).send(ok(response));
   });
 
   // --- GET /api/positions --------------------------------------------------
@@ -595,6 +907,52 @@ export function buildServer(dependencies: ServerDependencies) {
       : await repositories.markets.findByChainMarketId(config.chainId, id);
     if (market === null) throw new NotFoundError('No such market.');
     return market;
+  }
+
+  /** The resolution service, or an honest 501 saying why there is none. */
+  function requireResolution(): MarketResolutionService {
+    if (resolution === null) {
+      throw new NotImplementedError(
+        'This backend is running without a resolution pipeline — it has no chain connection or no ' +
+          'deployment manifest. No outcome will be invented in its place.',
+      );
+    }
+    return resolution;
+  }
+
+  /**
+   * The on-chain view of the standing proposal.
+   *
+   * Read from the contract rather than from the indexed cache: this is what a
+   * user decides whether to challenge on, and a stale challenge deadline is the
+   * one number here that could cost someone their chance to contest.
+   */
+  async function readProposalView(
+    market: MarketRecord,
+  ): Promise<GetResolutionResponse['onChain']> {
+    if (chain === null || market.contractAddress === null) return null;
+
+    const onChain = await chain.readMarket(market.contractAddress as Address);
+    if (onChain.proposalRound === 0) return null;
+
+    const nowSeconds = Math.floor(now().getTime() / 1000);
+    const standing = onChain.state === 'RESOLUTION_PROPOSED';
+
+    return {
+      state: onChain.state,
+      proposedOutcome: onChain.proposedOutcome,
+      finalOutcome: onChain.finalOutcome,
+      evidenceHash: onChain.evidenceHash,
+      proposalRound: onChain.proposalRound,
+      proposedAt: new Date(onChain.proposedAt * 1000).toISOString(),
+      challengeEndsAt: new Date(onChain.challengeEndsAt * 1000).toISOString(),
+      // Only round 1 is contestable; the replacement is final (ADR-0004).
+      challengeWindowOpen:
+        standing && onChain.proposalRound === 1 && nowSeconds < onChain.challengeEndsAt,
+      finalizable: standing && nowSeconds >= onChain.challengeEndsAt,
+      proposalsExhausted: onChain.proposalRound >= 2,
+      secondProposalRequired: onChain.state === 'CHALLENGED',
+    };
   }
 
   /** Resolve the bearer token, or refuse the request. */
@@ -690,8 +1048,10 @@ function toResolutionProposal(
     round: number;
     proposedAt: string | null;
     finalizedAt: string | null;
+    proposalTxHash: string | null;
   },
   market: MarketRecord,
+  chainState: MarketChainStateRecord | null,
 ): ResolutionProposal {
   return {
     marketId: market.chainMarketId ?? market.rulesHash,
@@ -703,9 +1063,99 @@ function toResolutionProposal(
     resolverVersion: record.resolverVersion,
     round: record.round,
     proposedAt: record.proposedAt,
-    challengeEndsAt: null,
+    // From the indexed chain state, which is where the deadline actually lives —
+    // it is `proposedAt + challengeWindow`, computed by the contract. Null when
+    // the indexer has not reached this market rather than computed here, because
+    // two implementations of one deadline eventually disagree.
+    challengeEndsAt:
+      chainState === null || chainState.challengeEndsAt === '0'
+        ? null
+        : new Date(Number(chainState.challengeEndsAt) * 1000).toISOString(),
     finalizedAt: record.finalizedAt,
+    proposalTxHash: record.proposalTxHash === null ? null : (record.proposalTxHash as `0x${string}`),
+  };
+}
+
+/**
+ * Validate a supplied validation plan.
+ *
+ * Two gates, and the second is the one that matters. The schema check rejects a
+ * malformed plan; the source check rejects a *well-formed* plan that points at a
+ * source the user never approved. Without it, an unhashed operator document
+ * could quietly widen the evidence policy that `approvedSources` exists to fix.
+ */
+function parseValidationPlan(input: unknown, approvedSourceCount: number): Record<string, unknown> {
+  const parsed = validateValidationPlan(input);
+  if (!parsed.ok) {
+    throw new ValidationError(
+      'The validation plan is not valid.',
+      parsed.issues.map((issue) => ({
+        path: `validationPlan.${issue.path}`,
+        message: issue.message,
+      })),
+    );
+  }
+
+  parsed.plan.checks.forEach((check, index) => {
+    const match = /^source-(\d+)$/.exec(check.observation.sourceId);
+    const position = match === null ? null : Number.parseInt(match[1] ?? '', 10);
+    if (position === null || !Number.isSafeInteger(position) || position >= approvedSourceCount) {
+      throw new ValidationError('The validation plan references a source this market did not approve.', [
+        {
+          path: `validationPlan.checks.${index}.observation.sourceId`,
+          message:
+            `must be source-0 through source-${approvedSourceCount - 1}; this specification ` +
+            `approved ${approvedSourceCount} source(s)`,
+        },
+      ]);
+    }
+  });
+
+  // Returned as the normalised plan rather than the caller's object: defaults
+  // (notably `encodes`) are applied, so what is stored is what will be run.
+  return parsed.plan as unknown as Record<string, unknown>;
+}
+
+/**
+ * A resolution outcome that never reached the engine, so was never persisted.
+ *
+ * Only `INVALID` outcomes take this path — a market that is still open, or one
+ * whose stored specification does not hash to what the chain holds. Nothing was
+ * proposed and nothing was recorded, and this says so rather than inventing a
+ * row to point at.
+ */
+function syntheticDetail(
+  outcome: {
+    status: string;
+    reason: string | null;
+    detail: string;
+    resolvedAt: string;
+    round: number;
+  },
+  market: MarketRecord,
+): Record<string, unknown> {
+  return {
+    marketId: market.chainMarketId ?? market.rulesHash,
+    rulesHash: market.rulesHash,
+    status: outcome.status,
+    reason: outcome.reason,
+    detail: outcome.detail,
+    outcome: null,
+    confidenceBps: 0,
+    reasoning: null,
+    rationale: null,
+    verdict: null,
+    deterministicChecks: [],
+    sources: [],
+    claims: [],
+    evidenceHash: null,
+    resolverVersion: '',
+    model: null,
+    round: outcome.round,
+    resolvedAt: outcome.resolvedAt,
     proposalTxHash: null,
+    proposalBlockNumber: null,
+    submissionState: 'NOT_SUBMITTED',
   };
 }
 

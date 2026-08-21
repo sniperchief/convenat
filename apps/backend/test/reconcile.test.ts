@@ -88,6 +88,7 @@ async function harness(options: { cacheState?: string; cachedTotals?: [string, s
     question: commitment.spec.question,
     specification: commitment.spec,
     canonical: commitment.canonical,
+    validationPlan: null,
     deadline: commitment.spec.deadline,
     tradingEndsAt: commitment.spec.settlement.tradingEndsAt,
     status: 'CLOSED',

@@ -1,0 +1,92 @@
+{
+  "generatedAt": "2026-08-21T17:13:34.980Z",
+  "chainId": 1952,
+  "environment": "testnet",
+  "factory": "0x0b039cfbd96c13c34a2fe9445d4e155a403cfb3e",
+  "creator": "0x9d4110a139aa42a8b9af91d5ce7e8721dd620e76",
+  "market": {
+    "variant": "demo",
+    "rulesHash": "0xb2fb2e7a5b502e645934c4de939c062c6c745c9dc231bfe1e339d27a32222198",
+    "canonical": "{\"ambiguities\":[{\"assumption\":\"Only the approved URL is consulted. If it does not serve a repository record, no outcome is inferred from its absence.\",\"description\":\"The repository could be renamed, transferred or made private.\"},{\"assumption\":\"The count read from the approved source at resolution time is the count, whatever caching produced it. The threshold is set far from the current value so that cache skew cannot change the outcome.\",\"description\":\"GitHub may serve a cached count, so two reads seconds apart can differ by a few stars.\"}],\"approvedSources\":[{\"dataPath\":\"/stargazers_count\",\"name\":\"GitHub REST API — ethereum/go-ethereum repository record\",\"retrievalKind\":\"http_json\",\"url\":\"https://api.github.com/repos/ethereum/go-ethereum\"}],\"conditionType\":\"binary\",\"creator\":\"0x9d4110a139aa42a8b9af91d5ce7e8721dd620e76\",\"deadline\":\"2026-08-21T17:19:34Z\",\"edgeCases\":[{\"outcome\":\"INVALID\",\"scenario\":\"The approved source is unreachable, or does not return a readable stargazers_count, throughout the resolution window.\"}],\"evidenceRequirements\":[\"The UTC instant of retrieval.\",\"The `stargazers_count` field of the GitHub repository record, at retrieval time.\",\"The keccak256 hash of the complete response body, so the reading can be checked.\"],\"failureCondition\":\"The GitHub REST API record for the repository ethereum/go-ethereum reports a `stargazers_count` of 40000 or fewer, read at or before the deadline.\",\"nonce\":\"0xcd41eaf994715f84384715145808ba91739c84f4fb7d91e72430ffa847188ee5\",\"question\":\"Will the ethereum/go-ethereum repository report more than 40,000 stargazers on the GitHub REST API at the deadline?\",\"resolutionMethod\":\"deterministic_numeric_threshold\",\"risk\":\"low\",\"settlement\":{\"challengeBondBaseUnits\":\"25000000\",\"challengeWindowSeconds\":60,\"kind\":\"binary_parimutuel\",\"resolutionDeadlineSeconds\":3600,\"token\":{\"address\":\"0x6d7227b319972af3006337fc5cda17737571c2e2\",\"chainId\":1952,\"decimals\":6,\"symbol\":\"TUSD\"},\"tradingEndsAt\":\"2026-08-21T17:18:34Z\"},\"successCondition\":\"The GitHub REST API record for the repository ethereum/go-ethereum reports a `stargazers_count` strictly greater than 40000, read at or before the deadline.\",\"timezone\":\"UTC\",\"version\":\"1.0\"}",
+    "specification": {
+      "version": "1.0",
+      "nonce": "0xcd41eaf994715f84384715145808ba91739c84f4fb7d91e72430ffa847188ee5",
+      "creator": "0x9d4110a139aa42a8b9af91d5ce7e8721dd620e76",
+      "question": "Will the ethereum/go-ethereum repository report more than 40,000 stargazers on the GitHub REST API at the deadline?",
+      "conditionType": "binary",
+      "successCondition": "The GitHub REST API record for the repository ethereum/go-ethereum reports a `stargazers_count` strictly greater than 40000, read at or before the deadline.",
+      "failureCondition": "The GitHub REST API record for the repository ethereum/go-ethereum reports a `stargazers_count` of 40000 or fewer, read at or before the deadline.",
+      "deadline": "2026-08-21T17:19:34Z",
+      "timezone": "UTC",
+      "resolutionMethod": "deterministic_numeric_threshold",
+      "approvedSources": [
+        {
+          "name": "GitHub REST API — ethereum/go-ethereum repository record",
+          "url": "https://api.github.com/repos/ethereum/go-ethereum",
+          "retrievalKind": "http_json",
+          "dataPath": "/stargazers_count"
+        }
+      ],
+      "evidenceRequirements": [
+        "The `stargazers_count` field of the GitHub repository record, at retrieval time.",
+        "The UTC instant of retrieval.",
+        "The keccak256 hash of the complete response body, so the reading can be checked."
+      ],
+      "ambiguities": [
+        {
+          "description": "GitHub may serve a cached count, so two reads seconds apart can differ by a few stars.",
+          "assumption": "The count read from the approved source at resolution time is the count, whatever caching produced it. The threshold is set far from the current value so that cache skew cannot change the outcome."
+        },
+        {
+          "description": "The repository could be renamed, transferred or made private.",
+          "assumption": "Only the approved URL is consulted. If it does not serve a repository record, no outcome is inferred from its absence."
+        }
+      ],
+      "edgeCases": [
+        {
+          "scenario": "The approved source is unreachable, or does not return a readable stargazers_count, throughout the resolution window.",
+          "outcome": "INVALID"
+        }
+      ],
+      "risk": "low",
+      "settlement": {
+        "kind": "binary_parimutuel",
+        "token": {
+          "chainId": 1952,
+          "address": "0x6d7227b319972af3006337fc5cda17737571c2e2",
+          "symbol": "TUSD",
+          "decimals": 6
+        },
+        "tradingEndsAt": "2026-08-21T17:18:34Z",
+        "challengeWindowSeconds": 60,
+        "challengeBondBaseUnits": "25000000",
+        "resolutionDeadlineSeconds": 3600
+      }
+    },
+    "validationPlan": {
+      "checks": [
+        {
+          "checkId": "stargazers-above-threshold",
+          "kind": "NUMERIC_COMPARISON",
+          "observation": {
+            "sourceId": "source-0",
+            "pointer": "/stargazers_count"
+          },
+          "operator": "GREATER_THAN",
+          "threshold": "40000",
+          "isPrice": false
+        }
+      ],
+      "encodes": "successCondition"
+    },
+    "createMarketParams": {
+      "token": "0x6d7227b319972af3006337fc5cda17737571c2e2",
+      "rulesHash": "0xb2fb2e7a5b502e645934c4de939c062c6c745c9dc231bfe1e339d27a32222198",
+      "tradingEndsAt": 1787332714,
+      "conditionDeadline": 1787332774,
+      "challengeWindow": 60,
+      "resolutionWindow": 3600,
+      "challengeBond": "25000000"
+    }
+  }
+}

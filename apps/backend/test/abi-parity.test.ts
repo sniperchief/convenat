@@ -121,8 +121,18 @@ describe('ABI parity with the compiled contracts', () => {
   });
 
   it('declares no function that can move a market\'s funds', () => {
-    // The backend reads. The one write it will ever perform is
-    // `proposeResolution`, which records an outcome and names no recipient.
+    // The backend reads. It declares exactly two writes, and neither transfers
+    // anything or names a recipient:
+    //
+    //   `proposeResolution` — the resolver key's only authority. Records an
+    //     outcome and an evidence commitment.
+    //   `finalize`          — permissionless on the contract, takes no
+    //     arguments, and refused before the challenge window closes. It makes
+    //     the *standing* proposal final; it cannot choose what that says.
+    //
+    // The assertion is exact rather than a denylist: a future `claim` or
+    // `withdrawRefund` appearing here has to be added to this list first, which
+    // is a change no one can make by accident.
     const writable = (conditionalMarketAbi as unknown as Fragment[]).filter(
       (fragment) =>
         fragment.type === 'function' &&
@@ -130,6 +140,15 @@ describe('ABI parity with the compiled contracts', () => {
         fragment.stateMutability !== 'pure',
     );
 
-    expect(writable.map((fragment) => fragment.name)).toEqual(['proposeResolution']);
+    expect(writable.map((fragment) => fragment.name)).toEqual(['proposeResolution', 'finalize']);
+  });
+
+  it('declares no token function that could move value', () => {
+    // The ERC-20 surface is read-only. `transfer`, `transferFrom` and `approve`
+    // are absent, so no amount of code above this layer can encode one.
+    const names = (erc20ReadAbi as unknown as Fragment[]).map((fragment) => fragment.name);
+    for (const forbidden of ['transfer', 'transferFrom', 'approve', 'permit']) {
+      expect(names, `${forbidden} must not be declared`).not.toContain(forbidden);
+    }
   });
 });

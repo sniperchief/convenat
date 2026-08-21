@@ -14,9 +14,23 @@
  *
  * Only what the backend uses is declared. The backend reads state and reads
  * logs; it never stakes, never claims, and never creates a market, so no
- * fund-moving function appears here at all. `proposeResolution` is the single
- * writable entry point the resolver key will ever reach (Milestone 5), and it
- * moves no money.
+ * fund-moving function appears here at all.
+ *
+ * **Two non-view functions are declared, and no more.**
+ *
+ * - `proposeResolution` — the resolver key's only authority. It records an
+ *   outcome and an evidence commitment; it moves no money and names no
+ *   recipient.
+ * - `finalize` — permissionless on the contract, takes no arguments, and can
+ *   only be called once the challenge window has closed. Calling it cannot
+ *   express a preference about the result: it makes the *standing* proposal
+ *   final, whatever that proposal says. It is declared so the backend can keep a
+ *   market moving without a human having to send a transaction; anyone else may
+ *   call it just as well.
+ *
+ * A fund-moving function is absent by construction: encoding a call to one
+ * requires a fragment, and there is none here to encode from.
+ * `abi-parity.test.ts` asserts this list stays exactly these two.
  */
 
 export const marketFactoryAbi = [
@@ -288,9 +302,9 @@ export const conditionalMarketAbi = [
     outputs: [{ name: '', type: 'uint256' }],
   },
 
-  // --- the one write the backend may ever perform ---------------------------
-  // Resolver authority, exercised in Milestone 5. It records an outcome and an
-  // evidence commitment; it transfers nothing and names no recipient.
+  // --- the only writes the backend may ever perform -------------------------
+  // Resolver authority. It records an outcome and an evidence commitment; it
+  // transfers nothing and names no recipient.
   {
     type: 'function',
     name: 'proposeResolution',
@@ -299,6 +313,16 @@ export const conditionalMarketAbi = [
       { name: 'outcome', type: 'uint8' },
       { name: 'evidenceHash_', type: 'bytes32' },
     ],
+    outputs: [],
+  },
+  // Permissionless, argument-free, and refused by the contract before the
+  // challenge window closes. It makes the standing proposal final; it cannot
+  // choose what that proposal says.
+  {
+    type: 'function',
+    name: 'finalize',
+    stateMutability: 'nonpayable',
+    inputs: [],
     outputs: [],
   },
 ] as const;

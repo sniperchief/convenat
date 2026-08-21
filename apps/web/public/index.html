@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Covenant — markets</title>
+    <link rel="stylesheet" href="/app.css" />
+    <script src="/config.js"></script>
+  </head>
+  <body>
+    <header class="top">
+      <span class="brand">Covenant</span>
+      <span class="tagline">Condition compilation and resolution infrastructure</span>
+      <nav>
+        <a href="/">Markets</a>
+        <a href="/create.html">Create</a>
+        <span id="who" class="small muted"></span>
+        <button id="signin" class="secondary">Sign in</button>
+      </nav>
+    </header>
+
+    <main>
+      <h1>Markets</h1>
+      <p class="muted small">
+        A market is a condition compiled into a deterministic specification, committed on-chain as
+        a <code>rulesHash</code>, and later resolved against the evidence sources its creator
+        approved. The contract holds the funds and decides the settlement; the resolver only
+        proposes.
+      </p>
+
+      <div id="status"></div>
+
+      <div class="panel">
+        <div class="stack">
+          <label style="margin: 0; flex: 0 0 auto">Filter</label>
+          <select id="filter" style="width: auto">
+            <option value="">All statuses</option>
+            <option value="PENDING_ONCHAIN">Pending on-chain</option>
+            <option value="OPEN">Open</option>
+            <option value="CLOSED">Closed</option>
+            <option value="RESOLUTION_PROPOSED">Resolution proposed</option>
+            <option value="CHALLENGED">Challenged</option>
+            <option value="FINALIZED">Finalized</option>
+            <option value="SETTLED">Settled</option>
+            <option value="CANCELLED">Cancelled</option>
+          </select>
+          <button id="refresh" class="secondary">Refresh</button>
+        </div>
+      </div>
+
+      <div id="markets"></div>
+    </main>
+
+    <script type="module" src="/list.mjs"></script>
+  </body>
+</html>

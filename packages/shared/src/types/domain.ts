@@ -91,6 +91,98 @@ export interface ResolutionProposal {
   readonly proposalTxHash: TxHash | null;
 }
 
+/**
+ * Why a resolution attempt ended where it did.
+ *
+ * Four terminal states, kept apart on purpose. Collapsing them into one
+ * "failed" would hide the distinction that matters most to a person reading the
+ * result: `INSUFFICIENT_EVIDENCE` means nothing was read, `NEEDS_REVIEW` means
+ * something was read and did not settle the question, and `INVALID` means the
+ * attempt should never have been made against this market at all.
+ *
+ * `RESOLUTION_FAILED` is separate again: no resolution was attempted, so there
+ * is nothing for a person to read and retrying is the correct response.
+ */
+export type MarketResolutionStatus =
+  | 'RESOLVED'
+  | 'NEEDS_REVIEW'
+  | 'INSUFFICIENT_EVIDENCE'
+  | 'INVALID'
+  | 'RESOLUTION_FAILED';
+
+/** One deterministic check, as the API presents it. Mirrors the hashed record. */
+export interface ResolutionCheckView {
+  readonly checkId: string;
+  readonly checkType: string;
+  readonly sourceIds: readonly string[];
+  readonly expected: string | null;
+  readonly observed: string | null;
+  readonly result: string;
+  readonly explanation: string;
+}
+
+/** One evidence source, as the API presents it. */
+export interface ResolutionSourceView {
+  readonly sourceId: string;
+  readonly approvedSourceIndex: number;
+  readonly name: string;
+  readonly url: string;
+  readonly status: string;
+  readonly retrievedAt: string | null;
+  readonly contentHash: Bytes32Hex | null;
+}
+
+/** One claim the resolver drew from the evidence. */
+export interface ResolutionClaimView {
+  readonly claimId: string;
+  readonly statement: string;
+  readonly value: string | null;
+  readonly support: string;
+  readonly sourceIds: readonly string[];
+  readonly extractionMethod: string;
+  readonly extractionLocator: string | null;
+}
+
+/**
+ * The full "why", assembled for the resolution panel.
+ *
+ * This is the product: a reader must be able to walk rules → evidence →
+ * deterministic checks → AI reasoning → proposed outcome → on-chain
+ * finalization without trusting any single step. Every field below is either
+ * inside `evidenceHash` or is explicitly labelled as operational metadata that
+ * is not.
+ */
+export interface ResolutionDetail {
+  readonly marketId: string;
+  readonly rulesHash: Bytes32Hex;
+  readonly status: MarketResolutionStatus;
+  /** Machine-readable reason. `null` only when the status is `RESOLVED`. */
+  readonly reason: string | null;
+  /** One line, safe to show. Never carries infrastructure detail. */
+  readonly detail: string;
+  readonly outcome: Outcome | null;
+  readonly confidenceBps: number;
+  /** The model's reasoning, verbatim. Inside `evidenceHash` when one exists. */
+  readonly reasoning: string | null;
+  /** Written by code, not the model: why this outcome follows from the checks. */
+  readonly rationale: string | null;
+  /** `SATISFIED | REFUTED | NEEDS_REVIEW` — the deterministic layer's verdict. */
+  readonly verdict: string | null;
+  readonly deterministicChecks: readonly ResolutionCheckView[];
+  readonly sources: readonly ResolutionSourceView[];
+  readonly claims: readonly ResolutionClaimView[];
+  readonly evidenceHash: Bytes32Hex | null;
+  readonly resolverVersion: string;
+  /** The model that served the request. Operational metadata. */
+  readonly model: string | null;
+  readonly round: number;
+  readonly resolvedAt: string;
+  /** Present once the proposal has been submitted and confirmed on-chain. */
+  readonly proposalTxHash: TxHash | null;
+  readonly proposalBlockNumber: string | null;
+  readonly submissionState: 'NOT_SUBMITTED' | 'SUBMITTED' | 'CONFIRMED' | 'FAILED';
+}
+
 /** A filed challenge against a proposed resolution. */
 export interface ChallengeRecord {
   readonly marketId: string;

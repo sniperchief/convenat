@@ -16,7 +16,8 @@ import type {
   MarketDetail,
   MarketSummary,
   Position,
-  ResolutionProposal,
+  ResolutionDetail,
+  TxHash,
 } from './domain.js';
 import type { MarketStatus } from '../schema/enums.js';
 
@@ -156,23 +157,86 @@ export type GetMarketResponse = MarketDetail;
 
 /** Triggers the resolution engine. Idempotent per market and round. */
 export interface ResolveMarketRequest {
-  /** Re-run even if a proposal already exists. Operator use only. */
+  /** Re-run even if a proposal already exists for this round. Operator use only. */
   readonly force?: boolean;
+  /**
+   * Produce the proposal but do not submit it.
+   *
+   * A dry run is the honest way to preview what the resolver would commit
+   * without committing it. The evidence package and its hash are still built
+   * and persisted, so what is previewed is exactly what would be submitted.
+   */
+  readonly dryRun?: boolean;
 }
 
-export type ResolveMarketResponse = ResolutionProposal;
+export type ResolveMarketResponse = ResolutionDetail;
+
+// --- GET /api/markets/:id/resolution ---------------------------------------
+
+/**
+ * The full resolution record, including the attempts that produced no proposal.
+ *
+ * `latest` is what the panel renders; `history` carries earlier rounds so a
+ * challenged market shows both the original proposal and its replacement.
+ */
+export interface GetResolutionResponse {
+  readonly marketId: string;
+  readonly latest: ResolutionDetail | null;
+  readonly history: readonly ResolutionDetail[];
+  /** The on-chain view of the standing proposal, or null before there is one. */
+  readonly onChain: {
+    readonly state: string;
+    readonly proposedOutcome: string;
+    readonly finalOutcome: string;
+    readonly evidenceHash: Bytes32Hex;
+    readonly proposalRound: number;
+    readonly proposedAt: string;
+    readonly challengeEndsAt: string;
+    readonly challengeWindowOpen: boolean;
+    readonly finalizable: boolean;
+    /** True when the contract's two-proposal limit has been reached. */
+    readonly proposalsExhausted: boolean;
+    readonly secondProposalRequired: boolean;
+  } | null;
+}
 
 // --- POST /api/markets/:id/challenge ---------------------------------------
 
+/**
+ * Record a challenge the caller has already filed on-chain.
+ *
+ * The backend does **not** file it. A challenge moves the caller's own bond, so
+ * the caller's wallet sends the transaction; this endpoint attaches the
+ * off-chain argument to the on-chain commitment and verifies the two agree.
+ */
 export interface ChallengeMarketRequest {
-  readonly challenger: string;
-  /** The challenge argument. Its keccak256 is what goes on-chain. */
+  /** The challenge argument. Its keccak256 must equal the on-chain reason hash. */
   readonly reason: string;
   /** Hash of the on-chain challenge transaction, so the bond can be verified. */
   readonly txHash: string;
 }
 
 export type ChallengeMarketResponse = ChallengeRecord;
+
+// --- POST /api/markets/:id/finalize ----------------------------------------
+
+/**
+ * Finalize a standing proposal once its challenge window has closed.
+ *
+ * Permissionless on the contract, so the backend may perform it — and it only
+ * relays. Every precondition is the contract's, checked there; nothing here
+ * decides an outcome or a payout.
+ */
+export interface FinalizeMarketResponse {
+  readonly marketId: string;
+  readonly submitted: boolean;
+  readonly txHash: TxHash | null;
+  readonly state: string;
+  readonly finalOutcome: string;
+  readonly refundMode: boolean;
+  /** Why nothing was submitted, when nothing was. */
+  readonly detail: string;
+}
 
 // --- GET /api/markets/:id/evidence -----------------------------------------
 

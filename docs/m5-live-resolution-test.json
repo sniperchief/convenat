@@ -1,6 +1,6 @@
 {
   "note": "A validation experiment, not a benchmark. Six scenarios, one run each. No model response text is recorded — only whether the system behaved correctly.",
-  "ranAt": "2026-08-20T15:03:06.963Z",
+  "ranAt": "2026-08-21T18:55:43.933Z",
   "model": "claude-haiku-4-5",
   "resolverVersion": "1.0.0",
   "scenarios": [
@@ -39,14 +39,12 @@
     {
       "label": "valid-yes",
       "expected": "PROPOSED_YES",
-      "status": "NEEDS_REVIEW",
-      "reason": "MODEL_OUTPUT_UNGROUNDED",
+      "status": "RESOLUTION_FAILED",
+      "reason": "PROVIDER_TIMEOUT",
       "outcome": null,
-      "confidenceBps": 9950,
+      "confidenceBps": null,
       "verdict": "SATISFIED",
-      "violations": [
-        "UNGROUNDED_VALUE"
-      ],
+      "violations": [],
       "claimCount": 1,
       "matchedExpectation": false,
       "errorType": null
@@ -54,16 +52,14 @@
     {
       "label": "valid-no",
       "expected": "PROPOSED_NO",
-      "status": "NEEDS_REVIEW",
-      "reason": "MODEL_OUTPUT_UNGROUNDED",
-      "outcome": null,
+      "status": "PROPOSED",
+      "reason": null,
+      "outcome": "NO",
       "confidenceBps": 9500,
       "verdict": "REFUTED",
-      "violations": [
-        "UNGROUNDED_VALUE"
-      ],
-      "claimCount": 1,
-      "matchedExpectation": false,
+      "violations": [],
+      "claimCount": 2,
+      "matchedExpectation": true,
       "errorType": null
     },
     {
@@ -110,19 +106,17 @@
     {
       "label": "precedence",
       "expected": "PROPOSED_YES",
-      "status": "NEEDS_REVIEW",
-      "reason": "MODEL_OUTPUT_UNGROUNDED",
-      "outcome": null,
-      "confidenceBps": 9800,
+      "status": "PROPOSED",
+      "reason": null,
+      "outcome": "YES",
+      "confidenceBps": 9500,
       "verdict": "SATISFIED",
-      "violations": [
-        "SOURCE_PRECEDENCE_VIOLATED"
-      ],
-      "claimCount": 1,
-      "matchedExpectation": false,
+      "violations": [],
+      "claimCount": 4,
+      "matchedExpectation": true,
       "errorType": null
     }
   ],
-  "matched": 3,
+  "matched": 5,
   "total": 6
 }

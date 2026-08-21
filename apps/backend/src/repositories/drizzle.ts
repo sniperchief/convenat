@@ -26,6 +26,8 @@ import type {
   AuthNonceRepository,
   AuthSessionRecord,
   AuthSessionRepository,
+  ChallengeDocumentRecord,
+  ChallengeRepository,
   CompilationRecord,
   CompilationRepository,
   CompilerSessionRecord,
@@ -46,6 +48,7 @@ import type {
   Repositories,
   ResolutionRecord,
   ResolutionRepository,
+  SubmissionState,
   WalletRecord,
   WalletRepository,
 } from './types.js';
@@ -58,14 +61,71 @@ export type Database = NodePgDatabase<typeof schema>;
  * The original is attached to `cause` for server-side logging and dropped from
  * the client-facing projection.
  */
-async function guard<T>(operation: string, run: () => Promise<T>): Promise<T> {
-  try {
-    return await run();
-  } catch (cause) {
-    const error = new RepositoryError(`The datastore could not complete ${operation}.`);
-    (error as { cause?: unknown }).cause = cause;
-    throw error;
+/**
+ * Failures that mean "the connection was not usable", not "the query was wrong".
+ *
+ * A serverless Postgres that has scaled to zero produces exactly these while it
+ * wakes. Retrying them is correct; retrying a constraint violation or a syntax
+ * error is not, which is why this is a narrow list rather than a blanket retry.
+ */
+const TRANSIENT_CONNECTION_ERRORS = [
+  'ETIMEDOUT',
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'EPIPE',
+  'ENOTFOUND',
+  'Connection terminated',
+  'socket disconnected',
+  'connection timeout',
+  'server closed the connection',
+];
+
+function isTransient(cause: unknown): boolean {
+  // The interesting text is often on a nested `cause`, so the whole chain is
+  // flattened before matching.
+  const parts: string[] = [];
+  let current: unknown = cause;
+  for (let depth = 0; depth < 5 && current !== null && current !== undefined; depth += 1) {
+    const record = current as { message?: unknown; code?: unknown; cause?: unknown };
+    if (typeof record.message === 'string') parts.push(record.message);
+    if (typeof record.code === 'string') parts.push(record.code);
+    current = record.cause;
   }
+  const text = parts.join(' ');
+  return TRANSIENT_CONNECTION_ERRORS.some((marker) => text.includes(marker));
+}
+
+const RETRY_DELAYS_MS = [500, 2_000, 5_000];
+
+/**
+ * Run a query, converting any failure into a `RepositoryError`.
+ *
+ * A transient connection failure is retried a few times first. That is not
+ * papering over a problem: on a database that suspends when idle, the first
+ * request after a quiet period *will* fail, and turning that into a 503 the user
+ * sees is the wrong answer when waiting two seconds produces the right one.
+ * Everything else fails immediately.
+ *
+ * The original is attached to `cause` for server-side logging and dropped from
+ * the client-facing projection.
+ */
+async function guard<T>(operation: string, run: () => Promise<T>): Promise<T> {
+  let lastCause: unknown;
+
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      return await run();
+    } catch (cause) {
+      lastCause = cause;
+      const delay = RETRY_DELAYS_MS[attempt];
+      if (delay === undefined || !isTransient(cause)) break;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+
+  const error = new RepositoryError(`The datastore could not complete ${operation}.`);
+  (error as { cause?: unknown }).cause = lastCause;
+  throw error;
 }
 
 const iso = (value: Date | string): string =>
@@ -236,6 +296,7 @@ class DrizzleMarketRepository implements MarketRepository {
           question: record.question,
           specification: record.specification,
           canonical: record.canonical,
+          validationPlan: record.validationPlan ?? null,
           deadline: new Date(record.deadline),
           tradingEndsAt: new Date(record.tradingEndsAt),
           status: record.status,
@@ -323,6 +384,21 @@ class DrizzleMarketRepository implements MarketRepository {
     });
   }
 
+  async setValidationPlan(input: {
+    rulesHash: string;
+    plan: unknown;
+    at: Date;
+  }): Promise<MarketRecord | null> {
+    return guard('a validation plan update', async () => {
+      const [row] = await this.db
+        .update(schema.markets)
+        .set({ validationPlan: input.plan, updatedAt: input.at })
+        .where(eq(schema.markets.rulesHash, input.rulesHash.toLowerCase()))
+        .returning();
+      return row === undefined ? null : toMarketRecord(row);
+    });
+  }
+
   async listOnChainAddresses(chainId: number): Promise<readonly string[]> {
     return guard('an on-chain address listing', async () => {
       const rows = await this.db
@@ -382,6 +458,114 @@ class DrizzleResolutionRepository implements ResolutionRepository {
       return row === undefined ? null : toResolutionRecord(row);
     });
   }
+
+  async listByRulesHash(rulesHash: string): Promise<readonly ResolutionRecord[]> {
+    return guard('a resolution listing', async () => {
+      const rows = await this.db
+        .select()
+        .from(schema.resolutions)
+        .where(eq(schema.resolutions.rulesHash, rulesHash.toLowerCase()))
+        .orderBy(desc(schema.resolutions.createdAt))
+        .limit(50);
+      return rows.map(toResolutionRecord);
+    });
+  }
+
+  async findProposedByRound(rulesHash: string, round: number): Promise<ResolutionRecord | null> {
+    return guard('a proposal lookup', async () => {
+      const rows = await this.db
+        .select()
+        .from(schema.resolutions)
+        .where(
+          and(
+            eq(schema.resolutions.rulesHash, rulesHash.toLowerCase()),
+            eq(schema.resolutions.round, round),
+            eq(schema.resolutions.status, 'PROPOSED'),
+          ),
+        )
+        .orderBy(desc(schema.resolutions.createdAt))
+        .limit(1);
+      const row = rows[0];
+      return row === undefined ? null : toResolutionRecord(row);
+    });
+  }
+
+  async record(input: {
+    rulesHash: string;
+    status: ResolutionStatus;
+    outcome: Outcome | null;
+    confidenceBps: number;
+    reason: string;
+    evidenceHash: string | null;
+    resolverVersion: string;
+    round: number;
+    record: unknown | null;
+    createdAt: Date;
+  }): Promise<ResolutionRecord> {
+    return guard('a resolution write', async () => {
+      const [row] = await this.db
+        .insert(schema.resolutions)
+        .values({
+          rulesHash: input.rulesHash.toLowerCase(),
+          status: input.status,
+          outcome: input.outcome,
+          confidenceBps: input.confidenceBps,
+          reason: input.reason,
+          evidenceHash: input.evidenceHash === null ? null : input.evidenceHash.toLowerCase(),
+          resolverVersion: input.resolverVersion,
+          round: input.round,
+          record: input.record ?? null,
+          submissionState: 'NOT_SUBMITTED',
+          createdAt: input.createdAt,
+        })
+        .returning();
+      if (row === undefined) throw new Error('resolution insert returned no row');
+      return toResolutionRecord(row);
+    });
+  }
+
+  async markSubmission(input: {
+    id: string;
+    submissionState: SubmissionState;
+    proposalTxHash: string | null;
+    proposalBlock: string | null;
+    proposedAt: Date | null;
+    at: Date;
+  }): Promise<ResolutionRecord | null> {
+    return guard('a proposal submission update', async () => {
+      // Only fields with a value are written: a `CONFIRMED` update that carried
+      // a null hash would otherwise erase the hash the `SUBMITTED` update wrote.
+      const values: Partial<typeof schema.resolutions.$inferInsert> = {
+        submissionState: input.submissionState,
+      };
+      if (input.proposalTxHash !== null) values.proposalTxHash = input.proposalTxHash.toLowerCase();
+      if (input.proposalBlock !== null) values.proposalBlock = BigInt(input.proposalBlock);
+      if (input.proposedAt !== null) values.proposedAt = input.proposedAt;
+
+      const [row] = await this.db
+        .update(schema.resolutions)
+        .set(values)
+        .where(eq(schema.resolutions.id, input.id))
+        .returning();
+      return row === undefined ? null : toResolutionRecord(row);
+    });
+  }
+
+  async markFinalized(input: { rulesHash: string; at: Date }): Promise<number> {
+    return guard('a finalization stamp', async () => {
+      const rows = await this.db
+        .update(schema.resolutions)
+        .set({ finalizedAt: input.at })
+        .where(
+          and(
+            eq(schema.resolutions.rulesHash, input.rulesHash.toLowerCase()),
+            isNull(schema.resolutions.finalizedAt),
+          ),
+        )
+        .returning();
+      return rows.length;
+    });
+  }
 }
 
 class DrizzleEvidenceRepository implements EvidenceRepository {
@@ -397,6 +581,102 @@ class DrizzleEvidenceRepository implements EvidenceRepository {
         .limit(1);
       const row = rows[0];
       return row === undefined ? null : toEvidenceRecord(row);
+    });
+  }
+
+  async findByEvidenceHash(evidenceHash: string): Promise<EvidenceRecord | null> {
+    return guard('an evidence lookup by hash', async () => {
+      const rows = await this.db
+        .select()
+        .from(schema.evidence)
+        .where(eq(schema.evidence.evidenceHash, evidenceHash.toLowerCase()))
+        .limit(1);
+      const row = rows[0];
+      return row === undefined ? null : toEvidenceRecord(row);
+    });
+  }
+
+  async save(input: {
+    rulesHash: string;
+    evidenceHash: string;
+    package: EvidencePackage;
+    createdAt: Date;
+  }): Promise<EvidenceRecord> {
+    return guard('an evidence write', async () => {
+      const evidenceHash = input.evidenceHash.toLowerCase();
+      // Idempotent on the digest rather than on a surrogate id: the same
+      // document produces the same hash, so saving it twice is one row by
+      // definition. `evidence` has no unique constraint on the column, so the
+      // check is explicit rather than an upsert.
+      const existing = await this.findByEvidenceHash(evidenceHash);
+      if (existing !== null) return existing;
+
+      const [row] = await this.db
+        .insert(schema.evidence)
+        .values({
+          rulesHash: input.rulesHash.toLowerCase(),
+          evidenceHash,
+          package: input.package,
+          createdAt: input.createdAt,
+        })
+        .returning();
+      if (row === undefined) throw new Error('evidence insert returned no row');
+      return toEvidenceRecord(row);
+    });
+  }
+}
+
+class DrizzleChallengeRepository implements ChallengeRepository {
+  constructor(private readonly db: Database) {}
+
+  async save(input: {
+    rulesHash: string;
+    challenger: string;
+    reasonHash: string;
+    reason: string;
+    bond: string;
+    txHash: string;
+    round: number;
+    challengedAt: Date;
+    createdAt: Date;
+  }): Promise<ChallengeDocumentRecord> {
+    return guard('a challenge write', async () => {
+      const [row] = await this.db
+        .insert(schema.challenges)
+        .values({
+          rulesHash: input.rulesHash.toLowerCase(),
+          challenger: input.challenger.toLowerCase(),
+          reasonHash: input.reasonHash.toLowerCase(),
+          reason: input.reason,
+          bond: input.bond,
+          txHash: input.txHash.toLowerCase(),
+          round: input.round,
+          challengedAt: input.challengedAt,
+          createdAt: input.createdAt,
+        })
+        .onConflictDoNothing({
+          target: [schema.challenges.rulesHash, schema.challenges.round],
+        })
+        .returning();
+
+      if (row !== undefined) return toChallengeDocumentRecord(row);
+
+      const existing = await this.findByRulesHash(input.rulesHash);
+      if (existing === null) throw new Error('challenge insert returned no row');
+      return existing;
+    });
+  }
+
+  async findByRulesHash(rulesHash: string): Promise<ChallengeDocumentRecord | null> {
+    return guard('a challenge lookup', async () => {
+      const rows = await this.db
+        .select()
+        .from(schema.challenges)
+        .where(eq(schema.challenges.rulesHash, rulesHash.toLowerCase()))
+        .orderBy(desc(schema.challenges.round))
+        .limit(1);
+      const row = rows[0];
+      return row === undefined ? null : toChallengeDocumentRecord(row);
     });
   }
 }
@@ -928,6 +1208,7 @@ export function createDrizzleRepositories(db: Database): Repositories {
     markets: new DrizzleMarketRepository(db),
     resolutions: new DrizzleResolutionRepository(db),
     evidence: new DrizzleEvidenceRepository(db),
+    challenges: new DrizzleChallengeRepository(db),
     events: new DrizzleMarketEventRepository(db),
     checkpoints: new DrizzleIndexerCheckpointRepository(db),
     chainState: new DrizzleMarketChainStateRepository(db),
@@ -951,6 +1232,7 @@ type CompilationRow = typeof schema.compilations.$inferSelect;
 type MarketRow = typeof schema.markets.$inferSelect;
 type ResolutionRow = typeof schema.resolutions.$inferSelect;
 type EvidenceRow = typeof schema.evidence.$inferSelect;
+type ChallengeRow = typeof schema.challenges.$inferSelect;
 type EventRow = typeof schema.marketEvents.$inferSelect;
 type CheckpointRow = typeof schema.indexerCheckpoints.$inferSelect;
 type ChainStateRow = typeof schema.marketChainState.$inferSelect;
@@ -1090,6 +1372,7 @@ function toMarketRecord(row: MarketRow): MarketRecord {
     question: row.question,
     specification: row.specification as ConditionSpec,
     canonical: row.canonical,
+    validationPlan: row.validationPlan ?? null,
     deadline: iso(row.deadline),
     tradingEndsAt: iso(row.tradingEndsAt),
     status: row.status as MarketStatus,
@@ -1111,6 +1394,26 @@ function toResolutionRecord(row: ResolutionRow): ResolutionRecord {
     round: row.round,
     proposedAt: row.proposedAt === null ? null : iso(row.proposedAt),
     finalizedAt: row.finalizedAt === null ? null : iso(row.finalizedAt),
+    createdAt: iso(row.createdAt),
+    record: row.record ?? null,
+    proposalTxHash: row.proposalTxHash,
+    proposalBlock: row.proposalBlock === null ? null : row.proposalBlock.toString(),
+    submissionState: row.submissionState as SubmissionState,
+  };
+}
+
+function toChallengeDocumentRecord(row: ChallengeRow): ChallengeDocumentRecord {
+  return {
+    id: row.id,
+    rulesHash: row.rulesHash as `0x${string}`,
+    challenger: row.challenger,
+    reasonHash: row.reasonHash as `0x${string}`,
+    reason: row.reason,
+    bond: row.bond,
+    txHash: row.txHash,
+    round: row.round,
+    challengedAt: iso(row.challengedAt),
+    createdAt: iso(row.createdAt),
   };
 }
 

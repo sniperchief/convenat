@@ -34,3 +34,6 @@ Thumbs.db
 # --- logs ---
 *.log
 npm-debug.log*
+
+# Generated per-deployment by apps/web/build.mjs from WEB_API_BASE.
+apps/web/public/config.js

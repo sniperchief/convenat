@@ -1,7 +1,11 @@
 /**
  * The viem-backed `ChainClient`.
  *
- * **The only file in the backend that imports viem.** Everything above it speaks
+ * **One of two files in the backend that import viem**, the other being
+ * `chain/writer.ts`, which holds the signer. They are separate files because
+ * reading and signing are separate capabilities: a component handed this class
+ * cannot send a transaction, and that is a property worth being able to see from
+ * an import list. Everything above them speaks
  * the plain types in `chain/types.ts`, which is what lets the indexer and the
  * routes be tested without a network and what keeps RPC concerns — retries,
  * ranges, decoding, confirmation depth — in one place instead of scattered
@@ -297,7 +301,7 @@ export class ViemChainClient implements ChainClient {
       'tradingEndsAt', 'conditionDeadline', 'challengeWindow', 'resolutionWindow', 'challengeBond',
       'state', 'proposedOutcome', 'finalOutcome', 'cancellationReason', 'proposalRound',
       'refundMode', 'proposedAt', 'challengedAt', 'finalizedAt', 'evidenceHash',
-      'challenger', 'challengedOutcome', 'bondOutstanding', 'bondRefundable',
+      'challenger', 'challengeReasonHash', 'challengedOutcome', 'bondOutstanding', 'bondRefundable',
       'totalYes', 'totalNo', 'forfeitedBond', 'remainingClaimableStake',
       'challengeEndsAt', 'resolutionDeadline', 'reviewDeadline', 'pool',
     ] as const;
@@ -342,6 +346,7 @@ export class ViemChainClient implements ChainClient {
       reviewDeadline: Number(at<bigint>('reviewDeadline')),
       evidenceHash: at<string>('evidenceHash').toLowerCase() as Hex,
       challenger: at<string>('challenger').toLowerCase() as Address,
+      challengeReasonHash: at<string>('challengeReasonHash').toLowerCase() as Hex,
       challengedOutcome: toOutcome(Number(at<number>('challengedOutcome'))),
       bondOutstanding: at<boolean>('bondOutstanding'),
       bondRefundable: at<boolean>('bondRefundable'),

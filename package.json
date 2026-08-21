@@ -16,7 +16,12 @@
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
-    "clean": "npm run clean --workspaces --if-present"
+    "clean": "npm run clean --workspaces --if-present",
+    "start:api": "npm run start --workspace @covenant/backend",
+    "start:indexer": "npm run start:indexer --workspace @covenant/backend",
+    "start:web": "npm run start --workspace @covenant/web",
+    "reconcile": "npm run reconcile --workspace @covenant/backend",
+    "demo": "npm run demo --workspace @covenant/backend --"
   },
   "devDependencies": {
     "typescript": "^5.6.3"

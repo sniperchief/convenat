@@ -130,6 +130,20 @@ export const markets = pgTable(
     question: text('question').notNull(),
     specification: jsonb('specification').notNull(),
     canonical: text('canonical').notNull(),
+    /**
+     * The deterministic acceptance criteria this market resolves on.
+     *
+     * **Not inside `rulesHash`, and that is a real weakening**, recorded rather
+     * than hidden — see ADR-0017 and the M5.3 note in BUILD_STATE. `ConditionSpec`
+     * v1.0 has nowhere to put a numeric threshold, so the plan is supplied
+     * alongside the specification instead of inside it. Two constraints bound the
+     * damage: a plan may only reference approved sources, and a deadline
+     * comparison may only use the specification's own deadline.
+     *
+     * Null means no plan was supplied. A market with no plan resolves to
+     * `NEEDS_REVIEW`, never to a guess.
+     */
+    validationPlan: jsonb('validation_plan'),
     deadline: timestamp('deadline', { withTimezone: true }).notNull(),
     tradingEndsAt: timestamp('trading_ends_at', { withTimezone: true }).notNull(),
     status: text('status').notNull(),
@@ -144,12 +158,15 @@ export const markets = pgTable(
 );
 
 /**
- * A resolution proposal.
+ * A resolution attempt.
  *
- * Written by the resolution engine in Milestone 5; read-only here. `outcome` is
- * null for a `NEEDS_REVIEW` or `RESOLUTION_FAILED` attempt — the engine
- * declining to guess is recorded as an attempt with no outcome, never as an
- * outcome with low confidence.
+ * Written by the resolution engine. `outcome` is null for a `NEEDS_REVIEW` or
+ * `RESOLUTION_FAILED` attempt — the engine declining to guess is recorded as an
+ * attempt with no outcome, never as an outcome with low confidence.
+ *
+ * **Every attempt is recorded, including the ones that proposed nothing.** A
+ * table holding only successes cannot answer "why has this market not
+ * resolved", which is the question an operator actually has.
  */
 export const resolutions = pgTable(
   'resolutions',
@@ -158,7 +175,7 @@ export const resolutions = pgTable(
     rulesHash: bytes32('rules_hash')
       .notNull()
       .references(() => markets.rulesHash, { onDelete: 'cascade' }),
-    /** PROPOSED | NEEDS_REVIEW | RESOLUTION_FAILED */
+    /** PROPOSED | NEEDS_REVIEW | RESOLUTION_FAILED — the engine's vocabulary. */
     status: text('status').notNull(),
     /** YES | NO | INVALID, or null when there is no outcome. */
     outcome: text('outcome'),
@@ -171,8 +188,73 @@ export const resolutions = pgTable(
     proposedAt: timestamp('proposed_at', { withTimezone: true }),
     finalizedAt: timestamp('finalized_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
+
+    /**
+     * The engine's full record: verdict, checks, sources, claims, reasoning,
+     * violations.
+     *
+     * Stored whole so the resolution panel can show *why* an attempt ended where
+     * it did without re-running retrieval against sources that may since have
+     * changed. For a `PROPOSED` attempt this duplicates what is inside the
+     * evidence package; for the others it is the only record there is.
+     *
+     * **This column is never hashed and never read back into a package.** It is
+     * a projection for humans, which is why an extra field appearing here cannot
+     * change `evidenceHash`.
+     */
+    record: jsonb('record'),
+
+    /**
+     * The proposal transaction, once one has been sent.
+     *
+     * Null while a proposal exists off-chain but has not been submitted — a
+     * distinction the UI must be able to draw, because an unsubmitted proposal
+     * binds nobody.
+     */
+    proposalTxHash: bytes32('proposal_tx_hash'),
+    proposalBlock: blockNumber('proposal_block'),
+    /** NOT_SUBMITTED | SUBMITTED | CONFIRMED | FAILED. A hash is not an outcome. */
+    submissionState: text('submission_state').notNull().default('NOT_SUBMITTED'),
   },
-  (table) => [index('resolutions_market_idx').on(table.rulesHash, table.round)],
+  (table) => [
+    index('resolutions_market_idx').on(table.rulesHash, table.round),
+    index('resolutions_created_idx').on(table.rulesHash, table.createdAt),
+  ],
+);
+
+/**
+ * A challenge document, attached to a challenge that already exists on-chain.
+ *
+ * The backend does not file challenges — a challenge moves the challenger's own
+ * bond, so their wallet sends the transaction. This table holds the argument
+ * behind the `reasonHash` the contract recorded, and a row is only written once
+ * the two have been verified to agree.
+ *
+ * **Nothing here decides whether a challenge wins.** `finalize()` does that,
+ * on-chain, by comparing the replacement outcome against the challenged one.
+ */
+export const challenges = pgTable(
+  'challenges',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    rulesHash: bytes32('rules_hash')
+      .notNull()
+      .references(() => markets.rulesHash, { onDelete: 'cascade' }),
+    challenger: address('challenger').notNull(),
+    /** keccak256 of `reason`, verified equal to the contract's stored value. */
+    reasonHash: bytes32('reason_hash').notNull(),
+    reason: text('reason').notNull(),
+    bond: uint256('bond').notNull(),
+    txHash: bytes32('tx_hash').notNull(),
+    /** The round that was challenged. The contract permits only round 1. */
+    round: integer('round').notNull(),
+    challengedAt: timestamp('challenged_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    uniqueIndex('challenges_market_round_idx').on(table.rulesHash, table.round),
+    index('challenges_challenger_idx').on(table.challenger),
+  ],
 );
 
 /**

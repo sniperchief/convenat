@@ -20,6 +20,8 @@ import type {
   AuthNonceRepository,
   AuthSessionRecord,
   AuthSessionRepository,
+  ChallengeDocumentRecord,
+  ChallengeRepository,
   CompilationRecord,
   CompilationRepository,
   CompilerSessionRecord,
@@ -165,6 +167,7 @@ class InMemoryMarketRepository implements MarketRepository {
       question: record.question,
       specification: record.specification,
       canonical: record.canonical,
+      validationPlan: record.validationPlan,
       deadline: record.deadline,
       tradingEndsAt: record.tradingEndsAt,
       status: record.status,
@@ -223,6 +226,24 @@ class InMemoryMarketRepository implements MarketRepository {
     return Promise.resolve(updated);
   }
 
+  setValidationPlan(input: {
+    rulesHash: string;
+    plan: unknown;
+    at: Date;
+  }): Promise<MarketRecord | null> {
+    const key = input.rulesHash.toLowerCase();
+    const existing = this.rows.get(key);
+    if (existing === undefined) return Promise.resolve(null);
+
+    const updated: MarketRecord = {
+      ...existing,
+      validationPlan: input.plan,
+      updatedAt: iso(input.at),
+    };
+    this.rows.set(key, updated);
+    return Promise.resolve(updated);
+  }
+
   listOnChainAddresses(chainId: number): Promise<readonly string[]> {
     const addresses: string[] = [];
     for (const record of this.rows.values()) {
@@ -263,6 +284,91 @@ class InMemoryResolutionRepository implements ResolutionRepository {
     const matches = this.rows.filter((row) => row.rulesHash.toLowerCase() === key);
     return Promise.resolve(matches[matches.length - 1] ?? null);
   }
+
+  listByRulesHash(rulesHash: string): Promise<readonly ResolutionRecord[]> {
+    const key = rulesHash.toLowerCase();
+    return Promise.resolve(
+      this.rows.filter((row) => row.rulesHash.toLowerCase() === key).slice().reverse(),
+    );
+  }
+
+  findProposedByRound(rulesHash: string, round: number): Promise<ResolutionRecord | null> {
+    const key = rulesHash.toLowerCase();
+    const matches = this.rows.filter(
+      (row) =>
+        row.rulesHash.toLowerCase() === key && row.round === round && row.status === 'PROPOSED',
+    );
+    return Promise.resolve(matches[matches.length - 1] ?? null);
+  }
+
+  record(input: {
+    rulesHash: string;
+    status: ResolutionRecord['status'];
+    outcome: ResolutionRecord['outcome'];
+    confidenceBps: number;
+    reason: string;
+    evidenceHash: string | null;
+    resolverVersion: string;
+    round: number;
+    record: unknown | null;
+    createdAt: Date;
+  }): Promise<ResolutionRecord> {
+    const stored: ResolutionRecord = {
+      id: randomUUID(),
+      rulesHash: input.rulesHash.toLowerCase() as `0x${string}`,
+      status: input.status,
+      outcome: input.outcome,
+      confidenceBps: input.confidenceBps,
+      reason: input.reason,
+      evidenceHash:
+        input.evidenceHash === null ? null : (input.evidenceHash.toLowerCase() as `0x${string}`),
+      resolverVersion: input.resolverVersion,
+      round: input.round,
+      proposedAt: null,
+      finalizedAt: null,
+      createdAt: iso(input.createdAt),
+      record: input.record,
+      proposalTxHash: null,
+      proposalBlock: null,
+      submissionState: 'NOT_SUBMITTED',
+    };
+    this.rows.push(stored);
+    return Promise.resolve(stored);
+  }
+
+  markSubmission(input: {
+    id: string;
+    submissionState: ResolutionRecord['submissionState'];
+    proposalTxHash: string | null;
+    proposalBlock: string | null;
+    proposedAt: Date | null;
+    at: Date;
+  }): Promise<ResolutionRecord | null> {
+    const index = this.rows.findIndex((row) => row.id === input.id);
+    if (index < 0) return Promise.resolve(null);
+    const existing = this.rows[index] as ResolutionRecord;
+
+    const updated: ResolutionRecord = {
+      ...existing,
+      submissionState: input.submissionState,
+      proposalTxHash: input.proposalTxHash ?? existing.proposalTxHash,
+      proposalBlock: input.proposalBlock ?? existing.proposalBlock,
+      proposedAt: input.proposedAt === null ? existing.proposedAt : iso(input.proposedAt),
+    };
+    this.rows[index] = updated;
+    return Promise.resolve(updated);
+  }
+
+  markFinalized(input: { rulesHash: string; at: Date }): Promise<number> {
+    const key = input.rulesHash.toLowerCase();
+    let updated = 0;
+    this.rows.forEach((row, index) => {
+      if (row.rulesHash.toLowerCase() !== key || row.finalizedAt !== null) return;
+      this.rows[index] = { ...row, finalizedAt: iso(input.at) };
+      updated += 1;
+    });
+    return Promise.resolve(updated);
+  }
 }
 
 class InMemoryEvidenceRepository implements EvidenceRepository {
@@ -270,7 +376,77 @@ class InMemoryEvidenceRepository implements EvidenceRepository {
 
   findByRulesHash(rulesHash: string): Promise<EvidenceRecord | null> {
     const key = rulesHash.toLowerCase();
-    return Promise.resolve(this.rows.find((row) => row.rulesHash.toLowerCase() === key) ?? null);
+    const matches = this.rows.filter((row) => row.rulesHash.toLowerCase() === key);
+    return Promise.resolve(matches[matches.length - 1] ?? null);
+  }
+
+  findByEvidenceHash(evidenceHash: string): Promise<EvidenceRecord | null> {
+    const key = evidenceHash.toLowerCase();
+    return Promise.resolve(this.rows.find((row) => row.evidenceHash.toLowerCase() === key) ?? null);
+  }
+
+  save(input: {
+    rulesHash: string;
+    evidenceHash: string;
+    package: EvidenceRecord['package'];
+    createdAt: Date;
+  }): Promise<EvidenceRecord> {
+    const key = input.evidenceHash.toLowerCase();
+    const existing = this.rows.find((row) => row.evidenceHash.toLowerCase() === key);
+    if (existing !== undefined) return Promise.resolve(existing);
+
+    const stored: EvidenceRecord = {
+      id: randomUUID(),
+      rulesHash: input.rulesHash.toLowerCase() as `0x${string}`,
+      evidenceHash: key as `0x${string}`,
+      package: input.package,
+      createdAt: iso(input.createdAt),
+    };
+    this.rows.push(stored);
+    return Promise.resolve(stored);
+  }
+}
+
+class InMemoryChallengeRepository implements ChallengeRepository {
+  readonly rows: ChallengeDocumentRecord[] = [];
+
+  save(input: {
+    rulesHash: string;
+    challenger: string;
+    reasonHash: string;
+    reason: string;
+    bond: string;
+    txHash: string;
+    round: number;
+    challengedAt: Date;
+    createdAt: Date;
+  }): Promise<ChallengeDocumentRecord> {
+    const key = input.rulesHash.toLowerCase();
+    const existing = this.rows.find(
+      (row) => row.rulesHash.toLowerCase() === key && row.round === input.round,
+    );
+    if (existing !== undefined) return Promise.resolve(existing);
+
+    const stored: ChallengeDocumentRecord = {
+      id: randomUUID(),
+      rulesHash: key as `0x${string}`,
+      challenger: input.challenger.toLowerCase(),
+      reasonHash: input.reasonHash.toLowerCase() as `0x${string}`,
+      reason: input.reason,
+      bond: input.bond,
+      txHash: input.txHash.toLowerCase(),
+      round: input.round,
+      challengedAt: iso(input.challengedAt),
+      createdAt: iso(input.createdAt),
+    };
+    this.rows.push(stored);
+    return Promise.resolve(stored);
+  }
+
+  findByRulesHash(rulesHash: string): Promise<ChallengeDocumentRecord | null> {
+    const key = rulesHash.toLowerCase();
+    const matches = this.rows.filter((row) => row.rulesHash.toLowerCase() === key);
+    return Promise.resolve(matches[matches.length - 1] ?? null);
   }
 }
 
@@ -617,6 +793,7 @@ class InMemoryAuthSessionRepository implements AuthSessionRepository {
 export interface InMemoryRepositories extends Repositories {
   readonly resolutions: InMemoryResolutionRepository;
   readonly evidence: InMemoryEvidenceRepository;
+  readonly challenges: InMemoryChallengeRepository;
 }
 
 export function createInMemoryRepositories(): InMemoryRepositories {
@@ -627,6 +804,7 @@ export function createInMemoryRepositories(): InMemoryRepositories {
     markets: new InMemoryMarketRepository(),
     resolutions: new InMemoryResolutionRepository(),
     evidence: new InMemoryEvidenceRepository(),
+    challenges: new InMemoryChallengeRepository(),
     events: new InMemoryMarketEventRepository(),
     checkpoints: new InMemoryIndexerCheckpointRepository(),
     chainState: new InMemoryMarketChainStateRepository(),
@@ -664,9 +842,18 @@ export function createFailingRepositories(
       attachOnChainIdentity: fail,
       updateStatus: fail,
       listOnChainAddresses: fail,
+      setValidationPlan: fail,
     },
-    resolutions: { findLatestByRulesHash: fail },
-    evidence: { findByRulesHash: fail },
+    resolutions: {
+      findLatestByRulesHash: fail,
+      listByRulesHash: fail,
+      findProposedByRound: fail,
+      record: fail,
+      markSubmission: fail,
+      markFinalized: fail,
+    },
+    evidence: { findByRulesHash: fail, findByEvidenceHash: fail, save: fail },
+    challenges: { save: fail, findByRulesHash: fail },
     events: {
       append: fail,
       listByMarket: fail,

@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Covenant — compile a condition</title>
+    <link rel="stylesheet" href="/app.css" />
+    <script src="/config.js"></script>
+  </head>
+  <body>
+    <header class="top">
+      <span class="brand">Covenant</span>
+      <span class="tagline">Condition compilation and resolution infrastructure</span>
+      <nav>
+        <a href="/">Markets</a>
+        <a href="/create.html">Create</a>
+        <span id="who" class="small muted"></span>
+        <button id="signin" class="secondary">Sign in</button>
+      </nav>
+    </header>
+
+    <main>
+      <h1>Compile a condition</h1>
+      <p class="muted small">
+        Describe the condition in plain language. The compiler turns it into a deterministic
+        specification — success and failure conditions, a deadline, approved sources, ambiguities
+        and edge cases — and hashes it. <strong>The model never chooses the economics.</strong> The
+        token, the trading window, the challenge window and the bond come from operator policy, so
+        approving the hash cannot approve terms a model invented.
+      </p>
+
+      <div id="status"></div>
+
+      <!-- Step 1: compile ------------------------------------------------- -->
+      <div class="panel">
+        <h2>1 · Describe the condition</h2>
+        <textarea id="message" placeholder="e.g. Will the ethereum/go-ethereum repository have more than 40,000 GitHub stars by 2026-09-01T00:00:00Z? Resolve from https://api.github.com/repos/ethereum/go-ethereum, field stargazers_count."></textarea>
+        <div class="stack" style="margin-top: 12px">
+          <button id="compile">Compile</button>
+          <span id="session" class="small muted"></span>
+        </div>
+      </div>
+
+      <!-- Step 2: review -------------------------------------------------- -->
+      <div class="panel" id="review-panel" hidden>
+        <h2>2 · Review the compiled specification</h2>
+        <p class="muted small" id="interpretation"></p>
+        <div id="questions"></div>
+        <div id="spec-summary"></div>
+        <details style="margin-top: 12px">
+          <summary class="small muted">Canonical form — the exact bytes that were hashed</summary>
+          <pre class="mono" id="canonical" style="white-space: pre-wrap"></pre>
+        </details>
+      </div>
+
+      <!-- Step 3: criteria ------------------------------------------------ -->
+      <div class="panel" id="plan-panel" hidden>
+        <h2>3 · Deterministic acceptance criteria</h2>
+        <p class="muted small">
+          What code checks before any model is asked anything. This is
+          <strong>not inside the rules hash</strong> — <code>ConditionSpec</code> v1.0 has nowhere
+          to put a threshold — so it is supplied alongside the specification and may only reference
+          sources this specification approved. A market registered without criteria resolves to
+          <code>NEEDS_REVIEW</code> rather than to a guess.
+        </p>
+        <textarea id="plan" spellcheck="false"></textarea>
+      </div>
+
+      <!-- Step 4: register ------------------------------------------------ -->
+      <div class="panel" id="register-panel" hidden>
+        <h2>4 · Approve and register</h2>
+        <p class="muted small">
+          Registering stores the specification against its hash. It does <em>not</em> create the
+          market: your own wallet commits the hash on-chain by calling the factory, and the indexer
+          joins the two when it observes <code>MarketCreated</code>. The backend never opens a
+          market on your behalf.
+        </p>
+        <dl class="facts">
+          <dt>rulesHash</dt>
+          <dd class="mono" id="rules-hash"></dd>
+        </dl>
+        <div class="stack" style="margin-top: 14px">
+          <button id="register">Register specification</button>
+        </div>
+      </div>
+    </main>
+
+    <script type="module" src="/create.mjs"></script>
+  </body>
+</html>

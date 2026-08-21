@@ -70,6 +70,7 @@ async function harness(options: { confirmations?: number } = {}) {
     question: 'test',
     specification: {} as never,
     canonical: '{}',
+    validationPlan: null,
     deadline: '2026-09-01T00:00:00.000Z',
     tradingEndsAt: '2026-08-31T00:00:00.000Z',
     status: 'PENDING_ONCHAIN',

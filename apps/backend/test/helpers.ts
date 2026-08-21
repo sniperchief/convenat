@@ -15,6 +15,7 @@ import { buildServer } from '../src/api/server.js';
 import { createInMemoryRepositories, type InMemoryRepositories } from '../src/repositories/memory.js';
 import type { ConditionDraft } from '../src/compiler/output-schema.js';
 import type { ChainClient } from '../src/chain/types.js';
+import type { MarketResolutionService } from '../src/resolution/service.js';
 
 /** Frozen clock. Every deadline in the fixtures is relative to this. */
 export const NOW = new Date('2026-08-01T00:00:00Z');
@@ -97,7 +98,15 @@ export function testConfig(overrides: Partial<AppConfig> = {}): AppConfig {
       pollIntervalMs: 12_000,
       /** Tests always bootstrap from the manifest; the override is an operator escape hatch. */
       startBlockOverride: null,
+      confirmationTimeoutMs: 5_000,
     },
+    resolution: {
+      confidenceFloorBps: 7_000,
+      maxEvidenceCharsPerSource: 6_000,
+    },
+    // Empty, so the CORS hook is not installed at all in tests. The one test
+    // that exercises the policy configures it explicitly.
+    corsOrigins: [],
     auth: {
       domain: TEST_AUTH_DOMAIN,
       uri: TEST_AUTH_URI,
@@ -212,6 +221,15 @@ export function createServer(
   overrides: {
     repositories?: InMemoryRepositories;
     chain?: ChainClient | null;
+    /**
+     * The resolution pipeline, when a test wants the routes to actually work.
+     *
+     * Null by default and left null by most tests, which is what keeps the
+     * "does not fake a resolution" assertions meaningful: a server built without
+     * one answers 501 rather than inventing a proposal.
+     */
+    resolution?: MarketResolutionService | null;
+    corsOrigins?: readonly string[];
     now?: () => Date;
   } = {},
 ): ServerHarness {
@@ -238,6 +256,8 @@ export function createServer(
     compiler: harness.compiler,
     auth,
     chain: overrides.chain ?? null,
+    resolution: overrides.resolution ?? null,
+    ...(overrides.corsOrigins === undefined ? {} : { corsOrigins: overrides.corsOrigins }),
     contracts: {
       factory: '0x00000000000000000000000000000000000fac70',
       settlementToken: TEST_TOKEN.address as `0x${string}`,

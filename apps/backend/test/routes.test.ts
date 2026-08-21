@@ -402,7 +402,16 @@ describe('POST /api/markets', () => {
   });
 });
 
-describe('routes that are not implemented yet', () => {
+/**
+ * The resolution routes exist now, but the pipeline behind them is optional.
+ *
+ * A backend built without a chain connection has no `MarketResolutionService`,
+ * and these routes then say so with a 501 rather than answering. That is the
+ * same posture the M3 stubs took, for the same reason: a fabricated proposal is
+ * worse than an admitted gap. These tests build a server *without* one, which is
+ * what `serve` does by default.
+ */
+describe('resolution routes without a configured pipeline', () => {
   it('does not fake a resolution', async () => {
     const { app } = await serve([]);
     const response = await app.inject({
@@ -426,10 +435,20 @@ describe('routes that are not implemented yet', () => {
       method: 'POST',
       url: `/api/markets/0x${'ab'.repeat(32)}/challenge`,
       payload: {
-        challenger: CREATOR,
         reason: 'The source was misread.',
         txHash: `0x${'cd'.repeat(32)}`,
       },
+    });
+    expect(response.statusCode).toBe(501);
+    expect(response.json().error.code).toBe('NOT_IMPLEMENTED');
+  });
+
+  it('does not fake a finalization', async () => {
+    const { app } = await serve([]);
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/markets/0x${'ab'.repeat(32)}/finalize`,
+      payload: {},
     });
     expect(response.statusCode).toBe(501);
     expect(response.json().error.code).toBe('NOT_IMPLEMENTED');
@@ -440,9 +459,51 @@ describe('routes that are not implemented yet', () => {
     const response = await app.inject({
       method: 'POST',
       url: `/api/markets/0x${'ab'.repeat(32)}/challenge`,
-      payload: { challenger: 'nope', reason: '', txHash: 'x' },
+      payload: { reason: '', txHash: 'x' },
     });
     expect(response.statusCode).toBe(400);
+  });
+
+  it('refuses a challenge that names its own challenger', async () => {
+    // `challenger` was removed from the request when challenges became real:
+    // an address a caller can set is not an identity. `.strict()` rejects it
+    // rather than ignoring it, so a client using the old shape is told.
+    const { app } = await serve([]);
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/markets/0x${'ab'.repeat(32)}/challenge`,
+      payload: {
+        challenger: CREATOR,
+        reason: 'The source was misread.',
+        txHash: `0x${'cd'.repeat(32)}`,
+      },
+    });
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('requires authentication before disclosing whether the pipeline exists', async () => {
+    const { rawApp } = await serve([]);
+    const response = await rawApp.inject({
+      method: 'POST',
+      url: `/api/markets/0x${'ab'.repeat(32)}/resolve`,
+      payload: {},
+    });
+    // 401, not 501: an anonymous caller learns nothing about this deployment's
+    // capabilities.
+    expect(response.statusCode).toBe(401);
+  });
+
+  it('leaves finalization unauthenticated, because the contract does', async () => {
+    // `finalize()` is permissionless on-chain and takes no arguments. Requiring
+    // a login here would invent a gate the protocol does not have — and liveness
+    // that depends on this backend is what ADR-0004 refuses.
+    const { rawApp } = await serve([]);
+    const response = await rawApp.inject({
+      method: 'POST',
+      url: `/api/markets/0x${'ab'.repeat(32)}/finalize`,
+      payload: {},
+    });
+    expect(response.statusCode).toBe(501);
   });
 
   it('does not report an empty portfolio when there is no chain to read', async () => {

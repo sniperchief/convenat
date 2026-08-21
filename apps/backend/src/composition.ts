@@ -28,7 +28,9 @@ import type { DeploymentManifest } from '@covenant/shared';
 import { AuthService } from './auth/service.js';
 import { ViemChainClient } from './chain/client.js';
 import { addressesFrom, loadDeploymentManifest, type DeployedAddresses } from './chain/manifest.js';
-import type { ChainClient } from './chain/types.js';
+import type { ChainClient, ResolverChainWriter } from './chain/types.js';
+import { ViemResolverWriter } from './chain/writer.js';
+import { MarketResolutionService } from './resolution/service.js';
 import { ConditionCompiler } from './compiler/compiler.js';
 import { loadConfig, type AppConfig } from './config.js';
 import { EvidenceRetriever } from './evidence/retriever.js';
@@ -65,6 +67,23 @@ export interface Runtime {
    * not part of this component and there is no path from it to a transaction.
    */
   readonly resolver: ResolutionEngine;
+  /**
+   * The signer, or null when no resolver key is configured.
+   *
+   * Null is a usable posture, not a broken one: the backend then produces and
+   * persists proposals without submitting them, which is what an operator wants
+   * while reviewing what the resolver would do.
+   */
+  readonly resolverWriter: ResolverChainWriter | null;
+  /**
+   * The pipeline that turns a market into a proposal on-chain.
+   *
+   * It is given the engine, the retriever, the read client and the writer — and
+   * it is the only component holding all four. That concentration is deliberate:
+   * the path from "a model said something" to "a transaction was sent" should be
+   * readable in one file.
+   */
+  readonly resolution: MarketResolutionService;
   /** Releases the connection pool. Every entry point must call it on shutdown. */
   close(): Promise<void>;
 }
@@ -99,7 +118,39 @@ export async function createRuntime(env: NodeJS.ProcessEnv = process.env): Promi
   // §15. Fatal, and before anything else touches the network.
   await chain.assertChainId();
 
-  const pool = new Pool({ connectionString: config.databaseUrl });
+  // Pool settings sized for a serverless Postgres that scales to zero.
+  //
+  // Neon (and Supabase, and Aurora Serverless) suspend an idle database and take
+  // seconds to wake. Two defaults in `pg` are wrong for that:
+  //
+  //  - `connectionTimeoutMillis: 0` means "wait forever", which in practice
+  //    means the OS TCP timeout fires first and surfaces as `ETIMEDOUT` — a
+  //    confusing error for what is really a cold start.
+  //  - `idleTimeoutMillis: 10000` keeps sockets the provider has already closed,
+  //    so the *next* request fails with `Client network socket disconnected
+  //    before secure TLS connection was established` before it can retry.
+  //
+  // Both were observed against the live database. The values below give a cold
+  // start room to finish and drop idle sockets before the provider does.
+  const pool = new Pool({
+    connectionString: config.databaseUrl,
+    connectionTimeoutMillis: 30_000,
+    idleTimeoutMillis: 5_000,
+    // Small on purpose. This process is one of several sharing one database —
+    // the API, the indexer and the reconciler all connect — and a provider that
+    // caps concurrent connections punishes a large pool per process rather than
+    // rewarding it. Measured behaviour on the live database: the first two
+    // connections succeed and subsequent ones time out.
+    max: 3,
+    // TCP keepalive on the sockets that do stay open, so a silently dropped
+    // connection is detected rather than discovered mid-query.
+    keepAlive: true,
+  });
+
+  // A pool-level error would otherwise be an unhandled 'error' event and take
+  // the process down. A dropped idle socket is normal here, not fatal: the pool
+  // discards it and the next checkout opens a fresh one.
+  pool.on('error', () => undefined);
   const db = drizzle(pool, { schema: await import('./db/schema.js') });
   const repositories = createDrizzleRepositories(db);
 
@@ -128,6 +179,8 @@ export async function createRuntime(env: NodeJS.ProcessEnv = process.env): Promi
     }),
     maxOutputTokens: config.llm.maxOutputTokens,
     timeoutMs: config.llm.timeoutMs,
+    confidenceFloorBps: config.resolution.confidenceFloorBps,
+    maxEvidenceCharsPerSource: config.resolution.maxEvidenceCharsPerSource,
   });
 
   const auth = new AuthService({
@@ -163,6 +216,28 @@ export async function createRuntime(env: NodeJS.ProcessEnv = process.env): Promi
     now: () => new Date(),
   });
 
+  // The signer is built only when a key is present. It is constructed *after*
+  // `assertChainId`, so a key can never be used against a chain this process has
+  // not confirmed.
+  const resolverWriter =
+    config.resolverPrivateKey === null
+      ? null
+      : new ViemResolverWriter({
+          chainId: config.chainId,
+          rpcUrl: config.chain.rpcUrl,
+          privateKey: config.resolverPrivateKey,
+        });
+
+  const resolution = new MarketResolutionService({
+    repositories,
+    chain,
+    writer: resolverWriter,
+    retriever: evidence,
+    engine: resolver,
+    confirmationTimeoutMs: config.chain.confirmationTimeoutMs,
+    now: () => new Date(),
+  });
+
   return {
     config,
     repositories,
@@ -173,6 +248,8 @@ export async function createRuntime(env: NodeJS.ProcessEnv = process.env): Promi
     chain,
     evidence,
     resolver,
+    resolverWriter,
+    resolution,
     close: async () => {
       await pool.end();
     },

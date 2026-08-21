@@ -206,18 +206,56 @@ export class HttpsSourceAdapter implements EvidenceSourceAdapter {
         },
         // The hook that makes this safe: `net.connect` calls it instead of
         // resolving again, so the socket lands on an address already vetted.
-        lookup: (hostname, _options, callback) => {
+        // The hook must honour `options.all`.
+        //
+        // Node 20 turned on `autoSelectFamily` by default, and that path calls
+        // `lookup` with `{ all: true }` and expects an **array** of
+        // `{ address, family }` — not the `(err, address, family)` form. Always
+        // answering with a bare string makes every real connection fail with
+        // `ERR_INVALID_IP_ADDRESS`, which surfaces as `SOURCE_UNAVAILABLE:
+        // connection failed` and is indistinguishable from the host being down.
+        //
+        // That is exactly how it was misread: M5.2's live smoke test recorded
+        // two outbound probes failing and concluded the development machine had
+        // no network. It did not — the adapter had never successfully fetched
+        // anything, and a plausible-looking failure classification hid it.
+        lookup: (hostname, lookupOptions, callback) => {
+          const done = callback as unknown as (
+            error: NodeJS.ErrnoException | null,
+            address: string | { address: string; family: number }[],
+            family?: number,
+          ) => void;
+
+          const fail = (message: string): void => {
+            done(new Error(message) as NodeJS.ErrnoException, '', 4);
+          };
+
           const chosen = addresses[0];
           if (chosen === undefined) {
-            callback(new Error(`no vetted address for ${hostname}`), '', 4);
+            fail(`no vetted address for ${hostname}`);
             return;
           }
+
+          // Re-checked here, not only before the call: this is the moment the
+          // socket is about to be opened, and it is what closes DNS rebinding.
           const reason = addressBlockedReason(chosen);
           if (reason !== null) {
-            callback(new Error(`address ${chosen} is not permitted (${reason})`), '', 4);
+            fail(`address ${chosen} is not permitted (${reason})`);
             return;
           }
-          callback(null, chosen, chosen.includes(':') ? 6 : 4);
+
+          const family = chosen.includes(':') ? 6 : 4;
+          if (lookupOptions !== null && typeof lookupOptions === 'object' && lookupOptions.all === true) {
+            // Every vetted address, so `autoSelectFamily` can do its job — each
+            // one has already passed the address policy.
+            const all = addresses
+              .filter((address) => addressBlockedReason(address) === null)
+              .map((address) => ({ address, family: address.includes(':') ? 6 : 4 }));
+            done(null, all.length > 0 ? all : [{ address: chosen, family }]);
+            return;
+          }
+
+          done(null, chosen, family);
         },
       };
 

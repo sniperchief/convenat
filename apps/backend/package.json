@@ -15,6 +15,10 @@
     "start:indexer": "node dist/indexer/main.js",
     "reconcile": "node dist/reconcile/main.js",
     "test:integration": "vitest run --config vitest.integration.config.ts",
+    "prepare:demo": "node dist/tools/prepare-demo.js",
+    "demo": "node dist/tools/demo.js",
+    "evidence:smoke": "node dist/tools/evidence-smoke-test.js",
+    "live:resolution": "node dist/tools/live-resolution-test.js",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\""
