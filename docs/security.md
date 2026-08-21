@@ -211,6 +211,71 @@ Stated plainly, because an undocumented risk is worse than a known one.
 6. **The `evmVersion` is pinned to `paris`** because X Layer's supported opcode set has not
    been confirmed by this project. This is conservative rather than correct-by-knowledge,
    and is revisited in Milestone 4 when the chain is actually probed.
+7. **The criteria a market settles on are not inside `rulesHash`.** This is the largest gap
+   between what a user approves and what decides their money, and it gets its own section
+   below.
+
+---
+
+## 10a. What must be fixed before mainnet
+
+Three items, in the order they matter. None is fixed in this build, and saying so is the
+point of this section.
+
+### 1. `ConditionSpec` v1.1 must carry acceptance criteria inside the hash
+
+**The problem.** `resolutionMethod` has a member `deterministic_numeric_threshold`,
+documented as *"a number from an approved source compared against a fixed threshold"* — and
+`ConditionSpec` v1.0 has nowhere to put that threshold. The only machine-readable criteria
+in the whole hashed document are `deadline` and `edgeCases[].outcome`.
+
+**What was done instead** (ADR-0017): the threshold lives in a `ValidationPlan` stored per
+market, supplied by the proved creator, outside `rulesHash`. So a user approving a
+`rulesHash` is **not** approving the number their money turns on.
+
+**What bounds the damage today**, and it is genuinely load-bearing rather than reassurance:
+
+- A plan may only reference sources the specification approved — it cannot widen the
+  evidence policy `approvedSources` exists to fix, and the API rejects an out-of-range
+  source reference.
+- **A deadline comparison may only use `spec_deadline`.** The plan schema has no
+  literal-instant variant *at all*, so an unhashed plan cannot substitute a deadline for
+  the one inside `rulesHash` — the single most valuable thing an attacker could change. A
+  test asserts the attempt is rejected.
+- The model reads both condition texts independently and must concur with the outcome the
+  checks establish, so a mis-set plan — including a mis-set `encodes` — produces
+  `NEEDS_REVIEW` rather than an inverted payout.
+- Only the creator may set it, and the creator is a proved wallet, not an address in a body.
+
+**Why it is not fixed here.** A schema version is a protocol change: new golden vectors, a
+second validator, and a migration for every committed hash. That is the correct eventual
+answer and it is not a hackathon-week answer.
+
+### 2. Resolver key custody
+
+The key sits in an environment variable — a `.env` locally, and a platform-held variable
+once the backend is hosted, where the platform can read it. A KMS-held key or a multisig
+proposer is required before mainnet.
+
+What bounds it: the resolver address holds `PROPOSER_ROLE` and nothing else; that role
+reaches exactly one function, which transfers nothing and names no recipient;
+`packages/contracts/test/security.test.ts` enumerates the whole ABI and asserts no
+fund-moving function is reachable by it; and the backend's own ABI declares two non-view
+functions — `proposeResolution` and `finalize` — with `abi-parity.test.ts` asserting that
+list is exactly those two. A fund-moving call cannot be encoded even by a fully compromised
+backend, because there is no fragment to encode it from.
+
+The realistic loss from a stolen resolver key is therefore **liveness and correctness of
+outcomes within the challenge window**, not custody.
+
+### 3. `AUTH_DOMAIN` must match the serving origin
+
+The domain is bound into the SIWE message the wallet displays and the server rebuilds at
+verification. A mismatch does not break the signature check — the server rebuilds from its
+own stored fields either way — but it shows the user a domain that is not the site they are
+on, which trains people to ignore exactly the field that makes a signed message safe.
+
+Set `AUTH_DOMAIN` and `AUTH_URI` to the real frontend origin in every deployment.
 
 ---
 

@@ -184,8 +184,26 @@ const integerFromEnv = (label: string) =>
 
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  /**
+   * Interface to bind.
+   *
+   * Loopback by default, because a development server should not be reachable
+   * from the network by accident. Every managed host (Render, Railway, Fly,
+   * Heroku) requires `0.0.0.0` instead — a process bound to loopback there is
+   * unreachable and the platform reports it as a failed health check with no
+   * hint as to why. Set `API_HOST=0.0.0.0` when deploying.
+   */
   API_HOST: z.string().default('127.0.0.1'),
   API_PORT: integerFromEnv('API_PORT').default('8080'),
+  /**
+   * The port a managed host assigns, which overrides `API_PORT`.
+   *
+   * Platforms inject `PORT` and expect the process to use exactly it; binding
+   * anything else fails the health check. Honoured here so a deployment needs no
+   * per-platform code, and kept separate from `API_PORT` so a local `.env` that
+   * sets `API_PORT` is not silently overridden by a stray `PORT` in the shell.
+   */
+  PORT: optionalString,
   LOG_LEVEL: z
     .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
     .default('info'),
@@ -402,13 +420,26 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     });
   }
 
+  // `PORT` wins when a platform set it. Collected into `issues` rather than
+  // thrown on its own, so a deployment with several things wrong is told about
+  // all of them on the first boot rather than one per restart.
+  let apiPort = value.API_PORT;
+  if (value.PORT !== undefined) {
+    const injected = Number.parseInt(value.PORT, 10);
+    if (!Number.isSafeInteger(injected) || injected < 1 || injected > 65535) {
+      issues.push({ path: 'PORT', message: 'must be a port number between 1 and 65535' });
+    } else {
+      apiPort = injected;
+    }
+  }
+
   if (issues.length > 0) {
     throw new ConfigurationError('Backend configuration is invalid', issues);
   }
 
   return {
     nodeEnv: value.NODE_ENV,
-    api: { host: value.API_HOST, port: value.API_PORT },
+    api: { host: value.API_HOST, port: apiPort },
     logLevel: value.LOG_LEVEL,
     logUserContent: value.LOG_USER_CONTENT === 'true',
     databaseUrl: value.DATABASE_URL,
