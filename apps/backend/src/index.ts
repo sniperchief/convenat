@@ -59,6 +59,16 @@ async function main(): Promise<void> {
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
   await app.listen({ host: config.api.host, port: config.api.port });
+
+  // Logged *after* the bind succeeds, so the line means the port is actually
+  // open rather than that we were about to try. A managed host reports an
+  // unreachable process as a health check that never passed, which says nothing
+  // about the cause — this line is what distinguishes "bound to the wrong
+  // interface" from "never got this far".
+  app.log.info(
+    { host: config.api.host, port: config.api.port },
+    'listening',
+  );
 }
 
 main().catch((error: unknown) => {

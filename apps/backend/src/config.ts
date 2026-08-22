@@ -185,15 +185,19 @@ const integerFromEnv = (label: string) =>
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   /**
-   * Interface to bind.
+   * Interface to bind. Resolved below, not here, because the default depends on
+   * `NODE_ENV` and Zod cannot see another field while defaulting one.
    *
-   * Loopback by default, because a development server should not be reachable
-   * from the network by accident. Every managed host (Render, Railway, Fly,
-   * Heroku) requires `0.0.0.0` instead — a process bound to loopback there is
-   * unreachable and the platform reports it as a failed health check with no
-   * hint as to why. Set `API_HOST=0.0.0.0` when deploying.
+   * Development binds loopback, so a dev server is not reachable from the
+   * network by accident. Production binds `0.0.0.0`, because every managed host
+   * — Railway, Render, Fly, Heroku — routes to the container from outside it,
+   * and a process on loopback there is simply unreachable.
+   *
+   * That failure is worth defaulting away: the platform reports it as a health
+   * check that never passed, which says nothing about the cause, and the process
+   * itself looks perfectly healthy in its own logs.
    */
-  API_HOST: z.string().default('127.0.0.1'),
+  API_HOST: optionalString,
   API_PORT: integerFromEnv('API_PORT').default('8080'),
   /**
    * The port a managed host assigns, which overrides `API_PORT`.
@@ -437,9 +441,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     throw new ConfigurationError('Backend configuration is invalid', issues);
   }
 
+  // Explicit setting always wins; otherwise production reaches the network and
+  // development does not.
+  const apiHost = value.API_HOST ?? (value.NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1');
+
   return {
     nodeEnv: value.NODE_ENV,
-    api: { host: value.API_HOST, port: apiPort },
+    api: { host: apiHost, port: apiPort },
     logLevel: value.LOG_LEVEL,
     logUserContent: value.LOG_USER_CONTENT === 'true',
     databaseUrl: value.DATABASE_URL,
