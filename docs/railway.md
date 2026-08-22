@@ -12,6 +12,23 @@ process:
 second service whose start command is overridden in the dashboard — it holds a
 cursor and must not be health-checked on a port it does not listen on.
 
+### Why `buildCommand` does not run `npm ci`
+
+It did, once, and the build failed:
+
+```
+npm error EBUSY: resource busy or locked, rmdir '/app/node_modules/.cache'
+```
+
+Nixpacks mounts a build cache at `/app/node_modules/.cache` and runs its own
+install phase before `buildCommand`. `npm ci` begins by deleting `node_modules`
+wholesale, and it cannot remove a directory that is a live mount point.
+
+So `buildCommand` compiles and nothing else — the install belongs to the
+platform, which knows about its own cache mount. `.dockerignore` keeps a local
+`node_modules` out of the build context for the same reason: a host's native
+binaries will not run in the container.
+
 ---
 
 ## 1. Create the project
@@ -132,6 +149,19 @@ Expect `chainConfigured: true`, `resolutionConfigured: true`, and
 `resolverConfigured: true` if you set the key. `resolverAddress` is a public
 fact — anyone can read `isProposer` from the factory — so it is safe to see
 there, and it makes the resolver's on-chain behaviour auditable.
+
+---
+
+## When it fails
+
+| The log says | What it means |
+| --- | --- |
+| `EBUSY … rmdir '/app/node_modules/.cache'` | Something put `npm ci` back into `buildCommand`. Remove it — see the note at the top |
+| `Backend configuration is invalid` with a field list | A variable is missing or malformed. The error names every one at once, deliberately, so a deployment is not fixed one restart at a time |
+| `ChainMismatchError` | `XLAYER_RPC_URL` is answering with a chain id that is not 1952. The backend refuses to run against a chain it was not configured for rather than indexing the wrong one |
+| `manifest … not found` | `X_LAYER_DEPLOYMENT_MANIFEST` must be exactly `packages/contracts/deployments/xlayer-testnet.json`, relative to the repository root |
+| Health check times out | `API_HOST` is not `0.0.0.0`, or you set `PORT`/`API_PORT` yourself. Let the platform assign it |
+| `REPOSITORY_UNAVAILABLE` at runtime | The database is unreachable. Check `DATABASE_URL`, and prefer the pooled endpoint — a Neon URL with `-pooler` in the hostname |
 
 ---
 
